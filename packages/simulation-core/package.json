@@ -1,0 +1,17 @@
+{
+  "name": "@ecomolt/simulation-core",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "esbuild test.ts --bundle --platform=node --outfile=/tmp/ecomolt-sim-test.js --format=esm && node --test /tmp/ecomolt-sim-test.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo ok"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0",
+    "typescript": "^5.5.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "ecomolt",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=@ecomolt/shared && npm run build --workspace=@ecomolt/simulation-core && npm run build --workspace=@ecomolt/game-server && npm run build --workspace=@ecomolt/mcp-server && npm run build --workspace=@ecomolt/client",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "dev": "bash dev.sh",
+    "dev:server": "npm run dev --workspace=@ecomolt/game-server",
+    "dev:client": "npm run dev --workspace=@ecomolt/client",
+    "dev:mcp": "npm run dev --workspace=@ecomolt/mcp-server"
+  },
+  "dependencies": {
+    "ws": "^8.21.0"
+  }
+}

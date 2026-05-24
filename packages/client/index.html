@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ecomolt — Spectator</title>
+    <style>
+      :root {
+        --bg: #0a0e17;
+        --surface: #131926;
+        --surface2: #1a2235;
+        --border: #243049;
+        --text: #d0d8e8;
+        --text-dim: #6b7fa3;
+        --accent: #3b82f6;
+        --green: #22c55e;
+        --red: #ef4444;
+        --yellow: #eab308;
+        --orange: #f97316;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        padding: 12px 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      header h1 { font-size: 18px; font-weight: 700; letter-spacing: 2px; }
+      header .status { display: flex; gap: 20px; font-size: 12px; }
+      header .status .label { color: var(--text-dim); }
+      header .status .value { font-weight: 700; }
+      .countdown { color: var(--red); font-size: 14px; font-weight: 700; }
+      .main {
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        grid-template-rows: 1fr auto;
+        flex: 1;
+        gap: 0;
+      }
+      .map-container {
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        position: relative;
+        overflow: hidden;
+      }
+      #mapCanvas { width: 100%; height: 100%; display: block; }
+      .map-overlay-toggles {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        display: flex;
+        gap: 6px;
+        z-index: 10;
+      }
+      .map-overlay-toggles button {
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        color: var(--text-dim);
+        padding: 4px 10px;
+        font-size: 11px;
+        font-family: inherit;
+        cursor: pointer;
+        border-radius: 4px;
+      }
+.map-overlay-toggles button.active {
+background: var(--accent);
+color: #fff;
+border-color: var(--accent);
+}
+.live-timeline { position: absolute; bottom: 0; left: 0; right: 0; height: 80px; background: rgba(10,14,23,0.75); border-top: 1px solid var(--border); }
+.live-timeline canvas { width: 100%; height: 100%; }
+.playback-controls { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; z-index: 10; }
+.playback-controls button { background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim); padding: 4px 8px; font-size: 10px; font-family: inherit; cursor: pointer; border-radius: 4px; }
+.playback-controls button:hover { background: var(--border); }
+      .sidebar {
+        background: var(--surface);
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+      }
+      .dashboard {
+        padding: 16px;
+        border-bottom: 1px solid var(--border);
+      }
+      .dashboard h2 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        color: var(--text-dim);
+        margin-bottom: 10px;
+      }
+      .metric-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+        font-size: 12px;
+      }
+      .metric-row .label { color: var(--text-dim); }
+      .metric-row .value { font-weight: 600; }
+      .bar-container {
+        width: 80px;
+        height: 6px;
+        background: var(--surface2);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .bar-fill {
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.5s;
+      }
+      .project-stages {
+        display: flex;
+        gap: 4px;
+        margin-top: 8px;
+      }
+      .project-stage {
+        flex: 1;
+        height: 8px;
+        background: var(--surface2);
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+      }
+      .project-stage.completed { background: var(--green); }
+.project-stage .fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.5s;
+}
+.project-stage-label { font-size:10px; color:var(--text-dim); margin-top:2px; }
+.project-resource-row { display:flex; justify-content:space-between; gap:4px; padding:1px 0; }
+.project-resource-row .res-name { color:var(--text-dim); }
+.project-resource-row .res-val { font-weight:600; }
+.project-labor-bar { height:4px; background:var(--surface2); border-radius:2px; margin-top:2px; overflow:hidden; }
+.project-labor-bar .fill { height:100%; background:var(--accent); border-radius:2px; }
+      .region-list { display: flex; flex-direction: column; gap: 2px; }
+      .region-item {
+        padding: 6px 8px;
+        font-size: 11px;
+        background: var(--surface2);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .region-item:hover { background: var(--border); }
+      .region-item .name { font-weight: 600; }
+      .region-item .stats { color: var(--text-dim); margin-top: 2px; }
+      .event-feed {
+        grid-column: 1 / -1;
+        background: var(--surface);
+        border-top: 1px solid var(--border);
+        padding: 8px 16px;
+        max-height: 140px;
+        overflow-y: auto;
+        font-size: 11px;
+      }
+      .event-feed h2 {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        color: var(--text-dim);
+        margin-bottom: 6px;
+      }
+      .event-line { padding: 2px 0; color: var(--text-dim); }
+      .event-line .day { color: var(--accent); font-weight: 600; }
+      .season-result {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.85);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        z-index: 100;
+      }
+      .season-result h2 { font-size: 48px; margin-bottom: 12px; }
+      .season-result p { font-size: 16px; color: var(--text-dim); }
+      .season-result.win h2 { color: var(--green); }
+      .season-result.lose_deadline h2 { color: var(--red); }
+      .season-result.lose_collapse h2 { color: var(--orange); }
+      .timeline-chart {
+        width: 80%;
+        max-width: 600px;
+        margin-top: 20px;
+      }
+      .timeline-chart canvas {
+        width: 100%;
+        height: 200px;
+      }
+      .timeline-legend {
+        display: flex;
+        gap: 16px;
+        margin-top: 8px;
+        font-size: 11px;
+        color: var(--text-dim);
+      }
+      .timeline-legend span { display: flex; align-items: center; gap: 4px; }
+      .timeline-legend .dot { width: 8px; height: 8px; border-radius: 50%; }
+.law-item { font-size: 11px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.law-item .title { font-weight: 600; }
+.law-item .cat { color: var(--text-dim); font-size: 10px; }
+.law-item .params { color: var(--accent); font-size: 10px; margin-top: 2px; }
+.market-list { display: flex; flex-direction: column; gap: 2px; max-height: 150px; overflow-y: auto; }
+.market-item { padding: 4px 8px; font-size: 11px; background: var(--surface2); border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+.market-item .resource { font-weight: 600; }
+.market-item .price { color: var(--yellow); }
+.market-item .seller { color: var(--text-dim); font-size: 10px; }
+.archive-list { display: flex; flex-direction: column; gap: 2px; max-height: 150px; overflow-y: auto; }
+.archive-item { padding: 4px 8px; font-size: 11px; background: var(--surface2); border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+.archive-item:hover { background: var(--border); }
+.archive-item .season-label { font-weight: 600; }
+.archive-item .result { font-size: 10px; }
+.archive-item .result.win { color: var(--green); }
+.archive-item .result.lose_deadline { color: var(--red); }
+.archive-item .result.lose_collapse { color: var(--orange); }
+.archive-detail { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; flex-direction: column; z-index: 101; }
+.archive-detail h2 { font-size: 28px; margin-bottom: 12px; }
+.archive-detail p { font-size: 14px; color: var(--text-dim); margin: 4px 0; }
+.archive-detail .close-btn { position: absolute; top: 20px; right: 24px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; font-family: inherit; font-size: 12px; cursor: pointer; border-radius: 4px; }
+.archive-detail .close-btn:hover { background: var(--border); }
+.citizen-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; margin-top: 12px; max-width: 500px; }
+.citizen-detail-grid .stat { padding: 6px 8px; background: var(--surface2); border-radius: 4px; }
+.citizen-detail-grid .stat .val { font-weight: 700; }
+.citizen-detail-grid .stat .lbl { color: var(--text-dim); font-size: 10px; }
+.citizen-inventory { margin-top: 8px; font-size: 11px; max-width: 500px; }
+.citizen-inventory .inv-item { display: inline-block; padding: 2px 6px; margin: 2px; background: var(--surface2); border-radius: 3px; }
+.citizen-events { margin-top: 8px; font-size: 10px; color: var(--text-dim); max-height: 120px; overflow-y: auto; max-width: 500px; }
+.citizen-events .evt { padding: 2px 0; border-bottom: 1px solid var(--border); }
+.metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 11px; }
+.metrics-grid .metric { padding: 4px 8px; background: var(--surface2); border-radius: 4px; }
+.metrics-grid .metric .val { font-weight: 700; font-size: 14px; }
+.metrics-grid .metric .lbl { color: var(--text-dim); font-size: 10px; }
+.model-table { width: 100%; font-size: 10px; margin-top: 8px; border-collapse: collapse; }
+.model-table th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 2px 4px; border-bottom: 1px solid var(--border); }
+.model-table td { padding: 2px 4px; }
+      .citizen-list { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow-y: auto; }
+      .citizen-item {
+        padding: 4px 8px;
+        font-size: 11px;
+        background: var(--surface2);
+        border-radius: 4px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .citizen-item .name { font-weight: 600; }
+      .citizen-item .tag { color: var(--text-dim); font-size: 10px; }
+      .citizen-item .tag.bot { color: var(--yellow); }
+      .citizen-item .tag.dead { color: var(--red); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>ECOMOLT</h1>
+      <div class="status">
+        <div><span class="label">Day </span><span class="value" id="dayCount">0</span><span class="label">/30</span></div>
+        <div class="countdown" id="countdown">30 days remaining</div>
+        <div><span class="label">Footprint </span><span class="value" id="footprint">0.0</span></div>
+        <div><span class="label">Alive </span><span class="value" id="aliveCount">0</span></div>
+        <div><span class="label">Result </span><span class="value" id="resultStatus">ongoing</span></div>
+      </div>
+    </header>
+    <div class="main">
+      <div class="map-container">
+        <div class="map-overlay-toggles">
+          <button data-overlay="pollution" class="active">Pollution</button>
+          <button data-overlay="fertility">Fertility</button>
+          <button data-overlay="species">Species</button>
+          <button data-overlay="citizens">Citizens</button>
+        </div>
+      <canvas id="mapCanvas"></canvas>
+      <div class="live-timeline"><canvas id="liveTimelineCanvas"></canvas></div>
+      <div class="playback-controls">
+        <button id="btnPause" title="Pause/resume updates">Pause</button>
+        <button id="btnSpeedSlow" title="Slow refresh">0.5x</button>
+        <button id="btnSpeedFast" title="Fast refresh">2x</button>
+      </div>
+    </div>
+      <div class="sidebar">
+      <div class="dashboard">
+        <h2>Collective Project</h2>
+        <div id="projectStatus" class="metric-row">
+          <span class="label">Stage</span><span class="value">—</span>
+        </div>
+        <div class="project-stages" id="projectStages"></div>
+        <div id="projectDetail" style="margin-top:6px;font-size:11px"></div>
+      </div>
+        <div class="dashboard">
+          <h2>Ecology Vitals</h2>
+          <div id="ecologyMetrics"></div>
+        </div>
+  <div class="dashboard">
+    <h2>Government</h2>
+    <div id="governmentInfo">
+      <div class="metric-row"><span class="label">Coordinator</span><span class="value" id="coordinator">None</span></div>
+      <div class="metric-row"><span class="label">Laws</span><span class="value" id="lawCount">0</span></div>
+    </div>
+    <div class="law-list" id="lawList"></div>
+  </div>
+  <div class="dashboard">
+    <h2>Market</h2>
+    <div class="market-list" id="marketList"></div>
+  </div>
+        <div class="dashboard">
+          <h2>Citizens</h2>
+          <div class="citizen-list" id="citizenList"></div>
+        </div>
+  <div class="dashboard">
+    <h2>Regions</h2>
+    <div class="region-list" id="regionList"></div>
+  </div>
+  <div class="dashboard">
+    <h2>Season Archives</h2>
+    <div class="archive-list" id="archiveList"></div>
+  </div>
+  <div class="dashboard" id="metricsPanel" style="display:none">
+    <h2>Season Metrics</h2>
+    <div id="metricsContent"></div>
+  </div>
+      </div>
+      <div class="event-feed">
+        <h2>Event Feed</h2>
+        <div id="eventLog"></div>
+      </div>
+    </div>
+    <div class="season-result" id="seasonResult" style="display:none"></div>
+<div class="archive-detail" id="archiveDetail" style="display:none"></div>
+<div class="archive-detail" id="citizenDetail" style="display:none"></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
