@@ -29,7 +29,7 @@ npm run dev:mcp     # Start MCP server only (stdio)
 1. `@ecomolt/shared`
 2. `@ecomolt/simulation-core` (depends on shared)
 3. `@ecomolt/game-server` (depends on simulation-core, shared)
-4. `@ecomolt/mcp-server` (depends on simulation-core, shared, MCP SDK)
+4. `@ecomolt/mcp-server` (depends on MCP SDK only; proxies to game server via HTTP)
 5. `@ecomolt/client` (depends on shared)
 
 ## Key Design Decisions
@@ -59,7 +59,7 @@ npm run dev:mcp     # Start MCP server only (stdio)
 - Campaign platforms visible in observe/look_at
 - Activity-scaled hunger: gather=+3, craft=+2, travel=+1, idle=+1; auto-eat 2 food/tick
 - Property/claims system: claim + relinquish_claim, per-region per-resource, max 2/citizen, enforcement in gather()
-- Full MCP tool surface (22 tools): observe, look_at, travel, gather, craft, contribute, trade, list_on_market, give, propose, vote, campaign, vote_election, start_election, close_election, govern, say, journal, read_channels, buy_food, claim, relinquish_claim
+- Full MCP tool surface (23 tools): register, observe, look_at, travel, gather, craft, contribute, trade, list_on_market, give, propose, vote, campaign, vote_election, start_election, close_election, govern, say, journal, read_channels, buy_food, claim, relinquish_claim
 - Bot governance: platform-aware election voting, campaigning, crisis response, election participation
 - Inter-agent communication: say + read_channels
 - Season rotation: rotating threat types (5 types cycle), transitionToNextSeason(), intermission period (30s default), citizen profiles persist across seasons (reputation narrative-only)
@@ -86,13 +86,17 @@ npm run dev:mcp     # Start MCP server only (stdio)
 - Playback controls: pause/resume, 0.5x/2x refresh speed
 - Ecology vitals panel: air/water/ground pollution, avg fertility, total species counts
 - Project progress detail panel: per-stage progress bars, resource/labor breakdowns, current stage highlight
+- MCP server v2: HTTP-proxied to game server (no isolated state), `ECOMOLT_API_URL` env var, `register` tool
+- `/api/register` accepts `modelTag` and `isBot` params
+- Multi-agent runner: `./multi-agent.sh agents.json` registers N agents and prints MCP configs
 - 63 passing tests
 
 **Known gaps (ranked by impact):**
 1. (none)
 
 **Next (in priority order):**
-1. M7+: Larger-scale testing, multi-agent scenarios
+1. M7: Multi-agent LLM experiments — run seasons with real LLM agents via MCP
+2. Public deployment readiness: API auth enforcement
 
 ## API Endpoints
 - `GET /api/state` — Current season state

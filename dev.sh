@@ -31,7 +31,7 @@ npx --prefix "$ROOT" vite dev "$ROOT/packages/client" --port 5173 &
 PIDS+=($!)
 
 echo "Starting MCP server (stdio)..."
-node "$ROOT/packages/mcp-server/dist/index.js" &
+ECOMOLT_API_URL=http://localhost:3000 node "$ROOT/packages/mcp-server/dist/index.js" &
 PIDS+=($!)
 
 echo ""

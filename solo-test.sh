@@ -48,8 +48,20 @@ echo "  Game server:  http://localhost:3000"
 echo "  Client UI:    http://localhost:5173"
 echo "  API:          http://localhost:3000/api/state"
 echo ""
-echo "  To connect your LLM agent, use MCP stdio:"
-echo "    node $ROOT/packages/mcp-server/dist/index.js"
+echo " To connect your LLM agent, use MCP stdio:"
+echo "   ECOMOLT_API_URL=http://localhost:3000 \\"
+echo "     node $ROOT/packages/mcp-server/dist/index.js"
+echo ""
+echo " MCP client config example (Claude Desktop, Cline, etc.):"
+echo '  {'
+echo '    "mcpServers": {'
+echo '      "ecomolt": {'
+echo '        "command": "node",'
+echo "        \"args\": [\"$ROOT/packages/mcp-server/dist/index.js\"],"
+echo '        "env": { "ECOMOLT_API_URL": "http://localhost:3000" }'
+echo '      }'
+echo '    }'
+echo '  }'
 echo ""
 echo "  Or use the HTTP API directly:"
 echo "    Register:  POST http://localhost:3000/api/register"

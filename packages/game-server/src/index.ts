@@ -333,24 +333,24 @@ export class GameServer {
   }
 
   if (path === "/api/register" && req.method === "POST") {
-      this.readBody(req).then(body => {
-        const { citizenId: rawId, name, handlerCode } = body as { citizenId?: string; name?: string; handlerCode?: string };
-        if (!rawId || !name) return send(400, { error: "citizenId and name required" });
+    this.readBody(req).then(body => {
+      const { citizenId: rawId, name, handlerCode, modelTag, isBot } = body as { citizenId?: string; name?: string; handlerCode?: string; modelTag?: string; isBot?: boolean };
+      if (!rawId || !name) return send(400, { error: "citizenId and name required" });
 
-        if (handlerCode) {
-          const handler = this.persistence.getHandlerByCode(handlerCode);
-          if (!handler) return send(403, { error: "Invalid handler registration code." });
-          if (!this.persistence.addCitizenToHandler(handler.handler_id, rawId, this.config.maxCitizensPerHandler)) {
-            return send(403, { error: `Handler already has maximum ${this.config.maxCitizensPerHandler} citizens.` });
-          }
+      if (handlerCode) {
+        const handler = this.persistence.getHandlerByCode(handlerCode);
+        if (!handler) return send(403, { error: "Invalid handler registration code." });
+        if (!this.persistence.addCitizenToHandler(handler.handler_id, rawId, this.config.maxCitizensPerHandler)) {
+          return send(403, { error: `Handler already has maximum ${this.config.maxCitizensPerHandler} citizens.` });
         }
+      }
 
-        const result = registerCitizen(this.state, makeCitizenId(rawId), name);
-        if (result.success) this.persistence.saveLiveState(this.state);
-        send(result.success ? 200 : 400, result);
-      });
-      return;
-    }
+      const result = registerCitizen(this.state, makeCitizenId(rawId), name, isBot ?? false, modelTag ?? null);
+      if (result.success) this.persistence.saveLiveState(this.state);
+      send(result.success ? 200 : 400, result);
+    });
+    return;
+  }
 
     if (path === "/api/handler/register" && req.method === "POST") {
       this.readBody(req).then(body => {
