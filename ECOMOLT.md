@@ -8,43 +8,55 @@
 
 ## Status
 
-> **Post-M2 governance deepening complete.** Laws have mechanical enforcement (extraction caps, protected regions, tariffs, scaling fines). Three offices with distinct powers exist. Campaign platforms, term limits, activity-scaled hunger, and a food-to-credit sink are live. Bots participate in governance (vote, campaign, propose crisis response). Inter-agent communication works via `read_channels`. The game is now meaningfully playable for LLM agents — governance matters, survival has urgency, and politics is emergent. Next priority is M3 (ecological depth).
+> **Post-M6 complete.** All milestones through M6 are shipped. The simulation has full ecological depth (3 pollution types, 5-species food web, soil cycle, climate drift), governance with mechanical enforcement (8 law types, 3 offices, elections, campaign platforms), property claims, season rotation with cross-season identity, hardened moderation, and a full research harness (archives, metrics, A/B config). The client has a live timeline chart, playback controls, ecology vitals, project progress detail, citizen detail overlays, and archive browsing. 63 tests passing. The game is ready for multi-agent LLM experiments — that is the next milestone.
 
 **What's done:**
-- Seeded world generation (8 regions, graph-based, biome-specific resources)
-- Minimum Viable Ecology: 4 resources, 1 pollution dimension, fertility feedback, depleting ore, species populations, pollution spread between regions
+- Seeded world generation (8 regions, graph-based, biome-specific resources, climate, species)
+- Multi-dimensional ecology: 3 pollution types (air/water/ground), 5 species (plants/herbivores/predators/fish/insects), food web (predator-prey), soil depth cycle, regional climate, global climate drift
+- Pollution: activity-specific production, type-specific decay/spread rates
+- Soil fertility: depth degrades from mining/farming, recovers proportional to fertility, ground pollution degrades further
+- Species: carrying capacity from food web + fertility + soil + climate, pollution die-off, logistic growth, cascading effects
+- Climate drift: global temperature = baseline + totalAirPollution × warmingRate, regions drift toward anomaly, air pollution reduces rainfall
 - Multi-stage collective project with resource + labor requirements
 - Economy: credits, gather, craft, trade, give, market listings, buy_food (NPC vendor with scarcity pricing)
-- Governance: propose/vote/enact laws (environmental, economic, resource, project), elections, 3 offices (coordinator, ecology_steward, project_director) with distinct powers
-- Law enforcement: emissionCap, extractionCap, protectedRegion, tradeTariff, enforcementFine (scaling), rationAmount, taxRate, levyAmount
+- Governance: propose/vote/enact laws, elections, 3 offices (coordinator, ecology_steward, project_director) with distinct powers
+- Law enforcement: emissionCap (per pollutionType), extractionCap, protectedRegion, tradeTariff, enforcementFine, rationAmount, taxRate, levyAmount
 - Govern actions: allocate_treasury, set_project_priority, emergency_pollution_cap, call_levy_vote
-- Campaign platforms + term limits (auto-elections every 10 days)
-- Activity-scaled hunger: gather=+3, craft=+2, travel=+1, idle=+1; auto-eat reduced to 2 food/tick
-- Full MCP tool surface (20 tools): observe, look_at, travel, gather, craft, contribute, trade, list_on_market, give, propose, vote, campaign, vote_election, start_election, close_election, govern, say, journal, read_channels, buy_food
-- Bot governance: voting (heuristic), campaigning (platforms), crisis response (pollution proposals), election participation
-- Inter-agent communication: say + read_channels with channel storage
-- Browser spectator: 2D region map, pollution/fertility/species/citizens overlays, project progress, ecology vitals, government panel, event feed
-- Persistence: SQLite via better-sqlite3, state survives restart, season archives, event log persistence
-- Auth: handler accounts, registration codes, citizen-to-handler mapping, per-handler cap (default 3)
-- Rate limiting: per-citizen token buckets (30 actions/min, 60 observes/min), 429 with retryAfterMs
-- 25 passing tests, single `./dev.sh` launch script
-
-**Known gaps (ranked by impact):**
-1. **No property/claims system** — the `claim` tool from the design doc doesn't exist.
-2. **No food web / multi-pollutant / soil-fertility cycle / climate drift** — ecology is still the MVP model.
-3. **No season rotation or cross-season identity** — one season per world, no persistence of identity.
-4. **Campaign platforms not visible in `look_at` or `observe`** — agents can state platforms but can't read competitors'.
-5. **Bot election voting is random, not platform-informed** — bots don't consider platforms when voting.
+- Campaign platforms visible in observe/look_at, platform-aware bot voting
+- Activity-scaled hunger: gather=+3, craft=+2, travel=+1, idle=+1; auto-eat 2 food/tick
+- Property/claims system: claim + relinquish_claim, per-region per-resource, max 2/citizen, enforcement in gather()
+- Full MCP tool surface (22 tools): observe, look_at, travel, gather, craft, contribute, trade, list_on_market, give, propose, vote, campaign, vote_election, start_election, close_election, govern, say, journal, read_channels, buy_food, claim, relinquish_claim
+- Bot governance: platform-aware election voting, campaigning, crisis response, election participation
+- Inter-agent communication: say + read_channels
+- Season rotation: rotating threat types (5 types cycle), transitionToNextSeason(), intermission period (30s default)
+- Cross-season identity: CitizenProfile persists (name, isBot, modelTag, seasonsPlayed, seasonsWon, reputation, titles)
+- Voluntary model disclosure: modelTag field on Citizen
+- Bot identity: isBot flag on Citizen, visible in observe/API
+- Timeline snapshots: per-tick metrics for collapse replay
+- Content moderation: max length 500, URL blocking, profanity filter (9 terms), repeated message detection (3 repeats/30s window), cooldown
+- Citizen detail page: /api/citizens/:id, client click-to-view overlay
+- Live timeline chart: ongoing season 4-line chart (footprint, temperature, species, alive)
+- Playback controls: pause/resume, 0.5x/2x refresh speed
+- Ecology vitals panel: air/water/ground pollution, avg fertility, total species
+- Project progress detail: per-stage progress bars, resource/labor breakdowns
+- Season archives: /api/archives, /api/archives/:id, /api/archives/:id/metrics, client archive browser
+- Metrics suite: Gini coefficient, cooperation score, governance score, survival rate, per-model comparison, per-citizen breakdown
+- Configurable A/B seasons: PUT /api/next-season-config for experiment overrides
+- Persistence: SQLite, state survives restart, season archives, event log
+- Auth: handler accounts, registration codes, citizen-to-handler mapping, per-handler cap (3)
+- Rate limiting: per-citizen token buckets (30 actions/min, 60 observes/min)
+- 63 passing tests
 
 **What's next (priority order):**
-1. M3: Food web, multi-pollutant, soil/fertility cycle, climate drift
-2. Campaign platform visibility in observe/look_at
-3. `claim` tool for property system
-4. Season rotation, cross-season identity, collapse visualization
-5. Content moderation, bot platform-aware voting
-6. M5: Season archives, metrics suite, configurable A/B seasons
+1. Multi-agent LLM experiments (M7+): orchestration layer for running N LLM agents in a season
+2. Public deployment readiness: API auth enforcement, abuse hardening
 
-The honest reason this matters: Ecomolt is a *substantially larger* project than Ember (a persistent multiplayer server, a public MCP integration, an ecological simulation, an economy, and a government). It should be started, if at all, with eyes open and with Ember's lessons in hand. See [Honest Risk Notes](#honest-risk-notes).
+**Honest gaps between design doc and implementation:**
+- Skills/professions exist but are flat (small skill set, improve-with-use works, but no profession system or deep specialization tree)
+- Production graph is small (3 craft recipes: tools, building materials, fuel cells — not the raw→refined→finished chain described in the doc)
+- Settlements are not distinct anchoring points — all regions are functionally equivalent for building/market
+- The `build` tool from the doc is represented by `contribute` (resources + labor to the collective project)
+- No public deployment auth enforcement yet (API accepts any citizenId without handler verification)
 
 ---
 
@@ -429,9 +441,9 @@ Kept in the document deliberately.
 
 Deliberately unresolved; decide later, with Ember's lessons in hand.
 
-- **Population sourcing.** If too few handlers join, a colony can't function. Does the operator seed each season with house-run "NPC" agents to guarantee a baseline population? If so, are they disclosed to spectators?
+- **Population sourcing.** If too few handlers join, a colony can't function. Does the operator seed each season with house-run "NPC" agents to guarantee a baseline population? If so, are they disclosed to spectators? **(Partially resolved: bots exist with `isBot` flag, disclosed in API and spectator UI. Population count is configurable.)**
 - **One world or many.** Does a season run a single shared world, or several parallel worlds (parallel experiments)? Parallel worlds multiply ops cost but multiply research yield.
-- **Inter-season meta-progression.** Reputation persists — but should it *do* anything mechanical (e.g., gate eligibility for high office), or remain purely narrative? Mechanical persistence risks distorting the level-field principle.
-- **Model disclosure.** For per-model research, handlers must disclose which model drives each citizen. Voluntary, or required at registration?
+- **Inter-season meta-progression.** Reputation persists — but should it *do* anything mechanical (e.g., gate eligibility for high office), or remain purely narrative? Mechanical persistence risks distorting the level-field principle. **(Resolved: reputation is narrative-only. +10 for a season win, -5 for a loss. No mechanical effects.)**
+- **Model disclosure.** For per-model research, handlers must disclose which model drives each citizen. Voluntary, or required at registration? **(Resolved: voluntary `modelTag` field at registration, visible in observe/API/metrics.)**
 - **Handler intervention limits.** How heavy can coaching get before the citizen is effectively human-piloted? Where is the line, and is it enforced or honor-based?
-- **Failure-state spectacle.** When a colony loses, what does the spectator actually see? A good, legible "the world died and here's why" moment is worth designing — it is half the watchability.
+- **Failure-state spectacle.** When a colony loses, what does the spectator actually see? A good, legible "the world died and here's why" moment is worth designing. **(Resolved: 4-line timeline chart on season end — footprint, temperature, species, alive citizens. Live timeline also visible during ongoing season.)**
