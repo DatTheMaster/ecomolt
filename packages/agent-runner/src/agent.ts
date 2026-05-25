@@ -48,7 +48,7 @@ export class Agent {
  private tickIntervalMs: number;
  private registered = false;
  private abortController = new AbortController();
- private lastSurvivalBuyTick = -10; // cooldown: don't buy food more than once per 4 ticks
+ private lastSurvivalBuyTick = -10; // cooldown: don't buy food more than once per 10 ticks
 
   constructor(config: AgentConfig, api: GameApiClient, rateLimiter: RateLimiter, tickIntervalMs: number) {
     this.config = config;
@@ -143,11 +143,12 @@ export class Agent {
  // If the agent is busy with a task, only interrupt for truly critical hunger (>90)
  if (foodOnHand >= 3 && hunger < 80) {
   // Skip survival action, let auto-eat handle it
- } else if (hunger > 70 && credits >= foodPrice && isBusy) {
-  // Busy but getting into health-damage territory (hunger >= 80 = -5 hp/tick)
-  // Buy food but don't interrupt — let the task continue
-  const maxAffordable = Math.floor(credits / foodPrice);
-  const foodNeeded = Math.ceil((hunger - 30) / 5) + 2; // target hunger ~30 with buffer
+ } else if (hunger > 80 && credits >= foodPrice && isBusy && (ticksSinceLastBuy >= 5)) {
+ // Busy and in health-damage territory (hunger >= 80 = -5 hp/tick)
+ // Buy food but don't interrupt — let the task continue
+ // Cooldown 5 ticks to prevent buying every single tick
+ const maxAffordable = Math.floor(credits / foodPrice);
+ const foodNeeded = Math.ceil((hunger - 30) / 5) + 2; // target hunger ~30 with buffer
   const amount = Math.min(maxAffordable, foodNeeded);
   if (amount > 0) {
    console.log(`[agent:${this.config.name}] EMERGENCY: buying ${amount} food while busy (hunger=${hunger.toFixed(0)})`);
@@ -156,7 +157,7 @@ export class Agent {
    this.lastSurvivalBuyTick = this.stats.ticksAlive;
    // Don't return — let the agent continue with its current task
   }
- } else if (hunger > 60 && credits >= foodPrice && !isBusy && (ticksSinceLastBuy >= 3)) {
+ } else if (hunger > 70 && credits >= foodPrice && !isBusy && (ticksSinceLastBuy >= 10)) {
   const maxAffordable = Math.floor(credits / foodPrice);
   // Buy enough to get hunger below 20 and have a buffer (each food = -5 hunger, auto-eats 2/tick)
   const foodNeeded = Math.ceil((hunger - 10) / 5) + 2; // extra buffer
