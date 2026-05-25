@@ -284,14 +284,23 @@ export class Agent {
    settlement: ["energy"],
   };
   const available = biomeResources[biome] ?? [];
-  if (available.includes(priorityResource)) {
-   console.log(`[agent:${this.config.name}] PRODUCTIVITY: overriding ${parsed.action} → gather ${priorityResource} (biome=${biome} has it)`);
-   await this.executeAction("gather", { resourceType: priorityResource });
-   return;
-  } else if (parsed.action === "buy_food" && !available.includes(priorityResource) && connections.length > 0) {
-   // Agent is in a biome that DOESN'T have the priority resource and is wasting credits on food
-   // Redirect to travel to a biome that DOES have it
-   const targetBiomes: Record<string, string[]> = {
+ if (available.includes(priorityResource)) {
+ console.log(`[agent:${this.config.name}] PRODUCTIVITY: overriding ${parsed.action} → gather ${priorityResource} (biome=${biome} has it)`);
+ await this.executeAction("gather", { resourceType: priorityResource });
+ return;
+ } else if (parsed.action === "buy_food" && !available.includes(priorityResource)) {
+ // Agent is in a biome that DOESN'T have the priority resource and is wasting credits on food
+ // First: check if current biome has ANY resource the project still needs
+ if (required) {
+ const neededHere = available.find(r => (required[r] ?? 0) > ((contributed?.[r] ?? 0)));
+ if (neededHere) {
+ console.log(`[agent:${this.config.name}] PRODUCTIVITY: overriding buy_food → gather ${neededHere} (biome=${biome} has it, project needs it)`);
+ await this.executeAction("gather", { resourceType: neededHere });
+ return;
+ }
+ }
+ // Second: no useful resources here, redirect to travel to a biome that has the priority resource
+ const targetBiomes: Record<string, string[]> = {
     wood: ["forest"],
     food: ["forest", "coast", "plains", "marsh"],
     ore: ["mountains"],
