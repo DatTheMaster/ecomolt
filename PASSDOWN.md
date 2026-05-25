@@ -1,84 +1,70 @@
 # PASSDOWN — Ecomolt Session Handoff
 
-## Current State: LIVE TEMPO TEST — STABLE AND PROGRESSING
+## Current State: LIVE TEMPO — STAGE 1 IN PROGRESS, 7-DAY OBSERVATION
 
 **Started:** 2026-05-25 (latest restart with critical survival fixes)
 **Server:** `TEMPO=live` on port 3000, DB at `data/ecomolt-live.db`
 **Agent Runner:** session `proc_9b05e71433f8`, 12 NIM agents
-**Status:** 12/12 alive, 0 deaths, 0 low HP, contributions flowing
+**Milestone:** Stage 0 completed at ~35 min. Stage 1 started. Priority: ore.
+**Health:** 12/12 alive, 0 deaths, 0 low HP. All stable.
+
+## 30-Minute Test Results (PASSED)
+- 12/12 alive for entire 30 minutes
+- Stage 0 completed: wood 55/50, ore 30/30, labor 21/20
+- 0 deaths, 0 low HP events
+- Fallback counts 0-1 per agent (minimal survival intervention)
+- Smart productivity override working (mountains→ore, forest→wood)
+- Auto-contribute triggering correctly (3+ units → contribute)
 
 ## Critical Fixes Applied This Session
 
 ### 1. Conditional Auto-Eat (simulation-core)
 - Auto-eat only triggers when `hunger > 30` (was: always when food > 0)
 - Prevents wasting food at low hunger — agents stockpile as buffer
-- File: `packages/simulation-core/src/world.ts` line ~1702
 
 ### 2. Reduced Hunger Rate (simulation-core)
-- `targetHungerPerDay` reduced from 15 to 8
-- Live tempo: `hungerPerTick ≈ 2.78` (was ~5.2)
-- LLM agents get 3-4 action cycles before health damage (was 1-2)
-- File: `packages/simulation-core/src/world.ts` line ~160
+- `targetHungerPerDay = 8` (was 15) — `hungerPerTick ≈ 2.78` in live tempo
+- Gives LLM agents 3-4 action cycles before health damage
 
 ### 3. Stale isBusy Fix (agent-runner)
-- Survival check now uses fresh `citizenData.currentTask` from server
-- Previously used stale `this.currentTask` → false "busy" emergency buys
-- File: `packages/agent-runner/src/agent.ts` line ~135
+- Uses `citizenData.currentTask` from server (was `this.currentTask`)
 
 ### 4. Smart Productivity Override (agent-runner)
-- Picks lowest-fill resource in biome (not just global priority)
-- Mountains agents gather ore/energy instead of traveling to forest
-- Forest agents can gather food when wood is >80% full
-- File: `packages/agent-runner/src/agent.ts` line ~270
+- Picks lowest-fill resource in biome, not just global priority
+- Mountains agents gather ore/energy; forest agents gather wood/food
 
 ### 5. buy_food Instant + Allowed While Busy
 - `buyFoodMin=0, buyFoodMax=0` in task durations
-- `buyFood` exempt from `requireIdle` check in world.ts
 - Agents can buy food while gathering/contributing
 
 ### 6. Deposit Regeneration (simulation-core)
-- Food regrows based on fertility × soil × rainfall per tick
-- Wood regrows in forests (0.3/tick), ore regenerates slowly (0.02/tick)
-- Energy regrows in mountains/coast (0.15/tick)
-
-## Survival Override System (agent-runner)
-
-1. **Idle, hunger>60, cooldown 3+ ticks** → buy food, skip LLM turn
-2. **Busy, hunger>70** → buy food but DON'T interrupt task (prevents health damage at 80+)
-3. **Can't afford food, hunger>30** → gather food from current region
-
-## Productivity Override System (agent-runner)
-
-- If LLM chose `travel` or `buy_food` and agent is idle:
-  1. Check if current biome has the lowest-fill resource → override to gather it
-  2. If no useful resources in biome → redirect travel to correct biome
-- Auto-contribute when agent has 3+ units of a resource the project needs
-
-## 20-Minute Check Results
-- Day 52, Alive 12/12, Stage 0
-- Wood: 20/50 (40%), Ore: 15/30 (50%), Labor: 8.6/20 (43%)
-- 0 deaths, 0 low HP, fallback counts 0-1 per agent
-- Priority still wood, ore catching up fast
-- Estimated stage 0 completion: ~25-35 more minutes
+- Food, wood, ore, energy all regenerate per tick
 
 ## Monitoring
-- 30-min check: `proc_347516b96078` (scheduled)
-- Cron: every 4h (`45b3ca12f354`)
+- Cron: every 4h (`45b3ca12f354`) — checks state, deaths, progress
 - Agent runner: `proc_9b05e71433f8`
 - Game server: `proc_a3832523a830`
 
-## Next Steps
-- Wait for 30-minute check to confirm long-term stability
-- If stable: let it run for 7 days to observe emergent behavior
-- Watch for: agent communication, law proposals, elections, trade
-- No code changes needed unless agents start dying
+## Emergent Behavior to Watch For
+- Agent communication (say/journal actions)
+- Law proposals and voting
+- Elections (every game year = 1 real day)
+- Trade between agents
+- Resource specialization patterns
+- Social dynamics (cooperation vs competition)
+
+## Recovery
+```bash
+# If agent runner dies:
+cd /home/deshiel/projects/ecomolt
+TEMPO=live node packages/agent-runner/dist/cli.js --config agents.json --api-url http://localhost:3000 &
+
+# If game server dies:
+cd /home/deshiel/projects/ecomolt
+TEMPO=live DB_PATH=./data/ecomolt-live.db ARCHIVE_DIR=./data/live-archives PORT=3000 node packages/game-server/dist/index.js &
+```
 
 ## Build & Test
 - `npm run build` — passes
 - `npm run test` — 76/76 pass
-- Latest commit: `034f137` — pushed to GitHub
-
-## Agents Configuration
-- 12 agents, all using NVIDIA NIM (llama-4-maverick-17b-128e-instruct)
-- API key from `~/.hermes/auth.json` (credential_pool.nvidia[0])
-- RPM: 40 per agent (well within free tier limits)
+- Latest commit: `ccc3684` — pushed to GitHub
