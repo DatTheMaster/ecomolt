@@ -270,23 +270,50 @@ export class Agent {
  }
 
  if ((parsed.action === "travel" || parsed.action === "buy_food") && !this.currentTask) {
-  const priorityResource = (this.lastObserveOutput.projectPriorityResource as string) ?? "wood";
-  const region = this.lastObserveOutput.region as Record<string, unknown> | undefined;
-  const biome = region?.biome as string ?? "";
-  const connections = region?.connections as Array<Record<string, string>> ?? [];
-  // Check if current biome has the priority resource
-  const biomeResources: Record<string, string[]> = {
-   forest: ["wood", "food"],
-   coast: ["food", "energy"],
-   mountains: ["ore", "energy"],
-   plains: ["food"],
-   marsh: ["food"],
-   settlement: ["energy"],
-  };
-  const available = biomeResources[biome] ?? [];
- if (available.includes(priorityResource)) {
- console.log(`[agent:${this.config.name}] PRODUCTIVITY: overriding ${parsed.action} → gather ${priorityResource} (biome=${biome} has it)`);
- await this.executeAction("gather", { resourceType: priorityResource });
+ const priorityResource = (this.lastObserveOutput.projectPriorityResource as string) ?? "wood";
+ const region = this.lastObserveOutput.region as Record<string, unknown> | undefined;
+ const biome = region?.biome as string ?? "";
+ const connections = region?.connections as Array<Record<string, string>> ?? [];
+ // Check if current biome has the priority resource
+ const biomeResources: Record<string, string[]> = {
+ forest: ["wood", "food"],
+ coast: ["food", "energy"],
+ mountains: ["ore", "energy"],
+ plains: ["food"],
+ marsh: ["food"],
+ settlement: ["energy"],
+ };
+ const available = biomeResources[biome] ?? [];
+ // Determine what the project MOST needs right now (not just the global priority)
+ let bestResource = priorityResource;
+ if (required && contributed) {
+ // Find the resource in current biome that has the lowest fill percentage
+ let lowestPct = 1.0;
+ for (const res of available) {
+ const needed = required[res] ?? 0;
+ if (needed > 0) {
+ const given = contributed[res] ?? 0;
+ const pct = given / needed;
+ if (pct < lowestPct) {
+ lowestPct = pct;
+ bestResource = res;
+ }
+ }
+ }
+ // If priority resource is >80% full and there's a biome resource <50%, prefer the lower one
+ const priorityPct = (required[priorityResource] ?? 0) > 0
+ ? (((contributed ?? {})[priorityResource] ?? 0) / (required[priorityResource] ?? 1))
+ : 1.0;
+ if (priorityPct > 0.8 && lowestPct < 0.5) {
+ bestResource = available.find(r => {
+ const n = required[r] ?? 0;
+ return n > 0 && (contributed[r] ?? 0) / n < 0.5;
+ }) ?? priorityResource;
+ }
+ }
+ if (available.includes(bestResource)) {
+ console.log(`[agent:${this.config.name}] PRODUCTIVITY: overriding ${parsed.action} → gather ${bestResource} (biome=${biome} has it, priority=${priorityResource})`);
+ await this.executeAction("gather", { resourceType: bestResource });
  return;
  } else if (parsed.action === "buy_food" && !available.includes(priorityResource)) {
  // Agent is in a biome that DOESN'T have the priority resource and is wasting credits on food
