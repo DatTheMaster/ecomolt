@@ -1706,10 +1706,10 @@ export function tick(state: SeasonState): EventLogEntry[] {
  citizen.hunger = Math.max(0, citizen.hunger - eaten * 5);
  }
 
-    if (citizen.hunger >= 80) {
-      citizen.health -= 5;
-    } else if (citizen.hunger < 20) {
-      citizen.health = Math.min(100, citizen.health + 1);
+ if (citizen.hunger >= 90) {
+ citizen.health -= 2; // Reduced from -5 at 80: gives LLM agents more time to buy food
+ } else if (citizen.hunger < 30) {
+ citizen.health = Math.min(100, citizen.health + 2); // +2/tick when well-fed (was +1 at <20)
     }
 
     const region = state.regions.get(citizen.regionId)!;
