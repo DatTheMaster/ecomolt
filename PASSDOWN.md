@@ -1,128 +1,84 @@
 # PASSDOWN — Ecomolt Session Handoff
 
-## Current State: LIVE TEMPO TEST RUNNING
+## Current State: LIVE TEMPO TEST — STABLE AND PROGRESSING
 
-**Started:** 2026-05-25, ~05:00 UTC (latest restart — final survival + productivity fixes)
-**Server:** `TEMPO=live` on port 3000, DB at `data/ecomolt-live.db`, session `proc_7e0b2e76109e`
-**Agent Runner:** 12 NIM agents, session `proc_f4ed19cd8455`
-**Season:** 1, Day ~8, 12/12 citizens alive
-**Season Duration:** 7 real days (20,160 ticks at 30s each)
-**10-min check:** session `proc_c27f625d9b90`
-**30-min check:** session `proc_2231a9c27bf4`
-**Cron monitor:** job `45b3ca12f354` (every 4h)
+**Started:** 2026-05-25 (latest restart with critical survival fixes)
+**Server:** `TEMPO=live` on port 3000, DB at `data/ecomolt-live.db`
+**Agent Runner:** session `proc_9b05e71433f8`, 12 NIM agents
+**Status:** 12/12 alive, 0 deaths, 0 low HP, contributions flowing
 
-## Dev Test Results (COMPLETED SUCCESSFULLY)
+## Critical Fixes Applied This Session
 
-- **8 NIM agents** survived multiple dev-tempo seasons (5-min each)
-- **0 LLM failures** across 90+ actions per agent
-- **Project stage 0 completed** in dev tempo (wood 40/20, ore 20/12, labor 11.5/8)
-- **Project stage 1 reached ~90%** (ore 30/32, energy 11/16, wood 30/12)
-- All agents maintained health=100, managed hunger, kept credits
-- Season result: `lose_deadline` (couldn't finish all 4 stages in 5 min, expected)
-- **Root cause of prior "no action" issue:** Rate limiter was 5 RPM shared across all agents — bumped to 40 RPM
+### 1. Conditional Auto-Eat (simulation-core)
+- Auto-eat only triggers when `hunger > 30` (was: always when food > 0)
+- Prevents wasting food at low hunger — agents stockpile as buffer
+- File: `packages/simulation-core/src/world.ts` line ~1702
 
-## Live Test Configuration
+### 2. Reduced Hunger Rate (simulation-core)
+- `targetHungerPerDay` reduced from 15 to 8
+- Live tempo: `hungerPerTick ≈ 2.78` (was ~5.2)
+- LLM agents get 3-4 action cycles before health damage (was 1-2)
+- File: `packages/simulation-core/src/world.ts` line ~160
 
-### 12 Agents
-| Agent | Strategy |
-|-------|----------|
-| Atlas | Ore + energy engineer (Western Mountains / Southern Coast) |
-| Forge | Wood + labor specialist (Northern Forest) |
-| Spark | Energy specialist (Western Mountains / Southern Coast) |
-| Birch | Forester — wood primary (Northern Forest) |
-| Cinder | Miner — ore primary (Western Mountains) |
-| Flux | Flexible worker — follows projectPriorityResource |
-| Gale | Food + energy gatherer (Central Plains / Southern Coast) |
-| Haven | Coordinator — fills largest project deficit |
-| Ember | Social organizer — governance, proposes laws |
-| Lumen | Food security specialist |
-| Thorn | Ecologist — pollution watch, proposes env laws |
-| Ridge | Mountain dweller — ore + energy |
+### 3. Stale isBusy Fix (agent-runner)
+- Survival check now uses fresh `citizenData.currentTask` from server
+- Previously used stale `this.currentTask` → false "busy" emergency buys
+- File: `packages/agent-runner/src/agent.ts` line ~135
 
-### Infrastructure
-- Game server: `TEMPO=live DB_PATH=./data/ecomolt-live.db ARCHIVE_DIR=./data/live-archives PORT=3000`
-- Agent runner: `TEMPO=live node packages/agent-runner/dist/cli.js --config agents.json`
-- Both running as background processes
+### 4. Smart Productivity Override (agent-runner)
+- Picks lowest-fill resource in biome (not just global priority)
+- Mountains agents gather ore/energy instead of traveling to forest
+- Forest agents can gather food when wood is >80% full
+- File: `packages/agent-runner/src/agent.ts` line ~270
 
-## Code Changes This Session
+### 5. buy_food Instant + Allowed While Busy
+- `buyFoodMin=0, buyFoodMax=0` in task durations
+- `buyFood` exempt from `requireIdle` check in world.ts
+- Agents can buy food while gathering/contributing
 
-1. **DB_PATH / ARCHIVE_DIR env vars** — `packages/game-server/src/index.ts`
-   - Allows isolated DBs per tempo mode (dev vs live)
-2. **agents.json** — 12 NIM agents, `rpm: 40`, diverse strategies, `apiUrl: localhost:3000`
-3. **agents.json tickIntervalMs** — 30000 for live tempo
-4. **BUY_FOOD instant** — `packages/shared/src/types.ts` LIVE_TASK_DURATIONS
-   - `buyFoodMin: 0, buyFoodMax: 0` (was 90/150) — buying food is a simple market transaction, should not take 90-150 seconds. The old duration trapped agents in a survival loop where they'd buy food, wait 3-5 ticks, hunger would rise, they'd need to buy again immediately
-5. **buy_food allowed while busy** — `packages/simulation-core/src/world.ts` startTask()
-   - When `buyFoodMin=0 && buyFoodMax=0`, buy_food bypasses the `currentTask !== null` check, allowing agents to buy food even while traveling/gathering
-   - Also removed `requireIdle` check from `buyFood()` itself — food purchase shouldn't block on task queue
-6. **Improved survival overrides** — `packages/agent-runner/src/agent.ts`
-   - Lowered buy_food threshold from hunger>70 to hunger>40
-   - Calculates food needed based on current hunger level (buys enough to reach hunger~10 + buffer)
-   - Lowered gather-food threshold from hunger>50 to hunger>30
-   - Checks inventory food count before buying
-   - **Cooldown:** 4-tick minimum between survival food buys (prevents credit drain from buying every tick)
-   - **Emergency while busy:** hunger > 70 AND agent has currentTask → buy food but DON'T return (agent continues its gather/contribute task). Prevents health damage (hunger >= 80 = -5 hp/tick) while not interrupting productive work.
-   - **Normal survival (idle):** hunger > 40 AND cooldown passed → buy food and return (skip LLM)
-7. **Resource deposit regeneration** — `packages/simulation-core/src/world.ts` tickRegion
-   - Food: 0.5-0.8/tick based on fertility/soil/rainfall (biome-dependent)
-   - Wood: 0.05-0.3/tick (forests regenerate faster)
-   - Ore: 0.02/tick (geological — very slow)
-   - Energy: 0.05-0.15/tick (mountains/coast regenerate faster)
-   - Each resource has biome-dependent caps
-   - Prevents total depletion over 7-day season
-8. **Food purchase availability** — `packages/simulation-core/src/world.ts` buyFood()
-   - Changed from 10% to 50% of deposits available per purchase (`Math.max(1, floor(deposits * 0.5))`)
-   - Was only allowing 1 unit in settlement biomes (13 deposits * 0.1 = 1)
-9. **Productivity override** — `packages/agent-runner/src/agent.ts`
-   - When LLM chooses travel/buy_food but the agent is already in a biome that has the priority resource → override to gather instead
-   - Biome-resource mapping: forest=[wood,food], coast=[food,energy], mountains=[ore,energy], etc.
-   - When LLM chooses buy_food in a biome that DOESN'T have the priority resource → redirect to travel to a connected biome that does
-   - Region-biome map: region-1=marsh, region-2=plains, region-3=coast, region-4=mountains, region-5=settlement, region-6=forest, region-7=forest
-10. **Auto-contribute** — `packages/agent-runner/src/agent.ts`
-    - Before any LLM action, check if agent has 3+ of a resource the project needs
-    - If yes, contribute it immediately (skip LLM call)
-    - Works in conjunction with the productivity override
+### 6. Deposit Regeneration (simulation-core)
+- Food regrows based on fertility × soil × rainfall per tick
+- Wood regrows in forests (0.3/tick), ore regenerates slowly (0.02/tick)
+- Energy regrows in mountains/coast (0.15/tick)
 
-## Known Issues
+## Survival Override System (agent-runner)
 
-1. **Travel path failures** — Some agents repeatedly try Eastern Marsh from disconnected regions. The LLM doesn't consistently read the connections list. Low-impact in live tempo (just wastes a tick).
-2. **Labor contributions** — Agents contribute 0-1 labor per contribution. The LLM doesn't seem to understand the labor parameter well. May need prompt tuning.
-3. ~~**Survival loop**~~ (FIXED) — buy_food is now instant, allowed while busy, with 4-tick cooldown. Busy agents get emergency buys at hunger>70 without task interruption.
-4. ~~**Agents don't gather/contribute**~~ (FIXED) — Productivity override forces gather when LLM chooses wasteful travel/buy_food in a productive biome. Travel-redirect sends agents to correct biome. Auto-contribute when 3+ resources in inventory.
-5. ~~**Settlement starvation loop**~~ (FIXED) — Agents in settlement who try buy_food get redirected to travel to a forest (where the priority resource is). No more wasting credits on food in the settlement.
-6. **Deposit depletion** — Was critical, now fixed with regeneration rates. But ore regen is very slow (0.02/tick) — may still become a bottleneck over 7 days.
-7. **Health damage from hunger** — `hunger >= 80` causes -5 hp/tick. Busy agents now get emergency buys at hunger>70, but there's a window (hunger 70-80) where they take damage before the next emergency buy triggers. This should be self-correcting: buy at 70, auto-eat brings hunger to ~50, rises again over 4 ticks, buy again.
+1. **Idle, hunger>60, cooldown 3+ ticks** → buy food, skip LLM turn
+2. **Busy, hunger>70** → buy food but DON'T interrupt task (prevents health damage at 80+)
+3. **Can't afford food, hunger>30** → gather food from current region
 
-## What To Monitor
+## Productivity Override System (agent-runner)
 
-- **Every few hours:** Check `/api/state` for day, alive count, project stage
-- **Every day:** Check `/api/project` for stage progress
-- **Watch for:** Starvation deaths, LLM failures, rate limit 429s, governance emergence
-- **Emergent behavior to look for:** Chat messages, proposals, election campaigns, coordination
+- If LLM chose `travel` or `buy_food` and agent is idle:
+  1. Check if current biome has the lowest-fill resource → override to gather it
+  2. If no useful resources in biome → redirect travel to correct biome
+- Auto-contribute when agent has 3+ units of a resource the project needs
 
-## API Quick Reference
-```
-GET /api/state — Season overview
-GET /api/project — Project stages + contributions
-GET /api/citizens — All citizen stats
-GET /api/events?since=N — Event log
-GET /api/metrics — Gini, cooperation, governance stats
-GET /api/laws — Enacted laws
-GET /api/proposals — Active proposals
-```
+## 20-Minute Check Results
+- Day 52, Alive 12/12, Stage 0
+- Wood: 20/50 (40%), Ore: 15/30 (50%), Labor: 8.6/20 (43%)
+- 0 deaths, 0 low HP, fallback counts 0-1 per agent
+- Priority still wood, ore catching up fast
+- Estimated stage 0 completion: ~25-35 more minutes
 
-## Recovery
+## Monitoring
+- 30-min check: `proc_347516b96078` (scheduled)
+- Cron: every 4h (`45b3ca12f354`)
+- Agent runner: `proc_9b05e71433f8`
+- Game server: `proc_a3832523a830`
 
-If the agent runner dies:
-```bash
-cd /home/deshiel/projects/ecomolt
-TEMPO=live node packages/agent-runner/dist/cli.js --config agents.json --api-url http://localhost:3000 &
-```
+## Next Steps
+- Wait for 30-minute check to confirm long-term stability
+- If stable: let it run for 7 days to observe emergent behavior
+- Watch for: agent communication, law proposals, elections, trade
+- No code changes needed unless agents start dying
 
-If the game server dies:
-```bash
-cd /home/deshiel/projects/ecomolt
-TEMPO=live DB_PATH=./data/ecomolt-live.db ARCHIVE_DIR=./data/live-archives PORT=3000 node packages/game-server/dist/index.js &
-```
+## Build & Test
+- `npm run build` — passes
+- `npm run test` — 76/76 pass
+- Latest commit: `034f137` — pushed to GitHub
 
-Both processes are long-lived daemons — no `notify_on_complete` needed.
+## Agents Configuration
+- 12 agents, all using NVIDIA NIM (llama-4-maverick-17b-128e-instruct)
+- API key from `~/.hermes/auth.json` (credential_pool.nvidia[0])
+- RPM: 40 per agent (well within free tier limits)
