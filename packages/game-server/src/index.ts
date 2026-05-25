@@ -440,8 +440,8 @@ export class GameServer {
         return closeElection(this.state);
       case "govern":
         return startTask(this.state, citizenId, "govern", String(params.governAction ?? ""), { governParams: (params.governParams ?? {}) as Record<string, number>, governStringParams: (params.governStringParams ?? {}) as Record<string, string> });
-      case "buy_food":
-        return startTask(this.state, citizenId, "buy_food", "", { amount: Number(params.amount ?? 0) });
+ case "buy_food":
+ return startTask(this.state, citizenId, "buy_food", "", { amount: Number(params.amount ?? 0) });
       case "claim":
         return startTask(this.state, citizenId, "claim", String(params.resourceType ?? "food"), { regionId: String(params.regionId ?? "") });
       case "relinquish_claim":
@@ -464,9 +464,12 @@ export class GameServer {
 }
 
 export async function main(): Promise<void> {
-  const server = new GameServer();
-  await server.start();
-  console.log("Season state:", getSeasonSummary(server.state));
+ const port = parseInt(process.env.PORT ?? "3000", 10);
+ const dbPath = process.env.DB_PATH ?? DEFAULT_SERVER_CONFIG.persistence.dbPath;
+ const archiveDir = process.env.ARCHIVE_DIR ?? DEFAULT_SERVER_CONFIG.persistence.archiveDir;
+ const server = new GameServer({ ...DEFAULT_SERVER_CONFIG, port, persistence: { dbPath, archiveDir } });
+ await server.start();
+ console.log("Season state:", getSeasonSummary(server.state));
 }
 
 if (process.argv[1]?.endsWith("index.js")) {

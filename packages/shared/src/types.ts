@@ -189,10 +189,10 @@ export const LIVE_TASK_DURATIONS: TaskDurationSeconds = {
   proposeMin: 150, proposeMax: 300,
   campaignMin: 90, campaignMax: 150,
   governMin: 240, governMax: 360,
-  buyFoodMin: 90, buyFoodMax: 150,
-  claimMin: 60, claimMax: 120,
-  voteMin: 30, voteMax: 60,
-  tradeMin: 60, tradeMax: 120,
+ buyFoodMin: 0, buyFoodMax: 0,
+ claimMin: 60, claimMax: 120,
+ voteMin: 30, voteMax: 60,
+ tradeMin: 60, tradeMax: 120,
 };
 
 export const DEV_TASK_DURATIONS: TaskDurationSeconds = {

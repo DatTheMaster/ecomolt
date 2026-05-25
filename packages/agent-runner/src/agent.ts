@@ -42,12 +42,13 @@ export class Agent {
   private lastObserveOutput: Record<string, unknown> = {};
   private chatHistory: Array<{ channel: string; from: string; message: string }> = [];
   private recentEvents: Array<{ day: number; type: string; data: Record<string, unknown> }> = [];
-  private currentTask: AgentContext["currentTask"] = null;
-  private llmConsecutiveFailures = 0;
-  private maxLlmFailures: number;
-  private tickIntervalMs: number;
-  private registered = false;
-  private abortController = new AbortController();
+ private currentTask: AgentContext["currentTask"] = null;
+ private llmConsecutiveFailures = 0;
+ private maxLlmFailures: number;
+ private tickIntervalMs: number;
+ private registered = false;
+ private abortController = new AbortController();
+ private lastSurvivalBuyTick = -10; // cooldown: don't buy food more than once per 4 ticks
 
   constructor(config: AgentConfig, api: GameApiClient, rateLimiter: RateLimiter, tickIntervalMs: number) {
     this.config = config;
@@ -125,22 +126,59 @@ export class Agent {
     return;
   }
 
-  // SURVIVAL CHECK: If hunger is critical, buy food immediately — no LLM needed
-  const hunger = citizenData.hunger as number ?? 0;
-  const health = citizenData.health as number ?? 100;
-  const credits = citizenData.credits as number ?? 0;
-  if (hunger > 70 && credits >= 10) {
-    const amount = Math.min(Math.floor(credits / 10), 5);
-    console.log(`[agent:${this.config.name}] SURVIVAL: buying ${amount} food (hunger=${hunger.toFixed(0)}, credits=${credits})`);
-    await this.api.action(this.config.citizenId, "buy_food", { amount });
-    this.stats.fallbackActions++;
-    return;
+ // SURVIVAL CHECK: If hunger is critical, buy food immediately — no LLM needed
+ const hunger = citizenData.hunger as number ?? 0;
+ const health = citizenData.health as number ?? 100;
+ const credits = citizenData.credits as number ?? 0;
+ const inventory = citizenData.inventory as Record<string, number> ?? {};
+ const foodOnHand = inventory.food ?? 0;
+ const foodPrice = 3; // base price per unit (scarcity may increase it, but this is a safe floor)
+ const ticksSinceLastBuy = this.stats.ticksAlive - this.lastSurvivalBuyTick;
+ const currentRegion = citizenData.regionId as string ?? "region-5";
+ // Use FRESH currentTask from server, not stale this.currentTask
+ const freshTask = citizenData.currentTask as AgentContext["currentTask"];
+ const isBusy = freshTask !== null && freshTask !== undefined;
+ // Survival food purchase — but DON'T let it starve the LLM of turns
+ // Only buy food on survival if: (1) cooldown passed, or (2) truly critical (hunger > 90)
+ // If the agent is busy with a task, only interrupt for truly critical hunger (>90)
+ if (foodOnHand >= 3 && hunger < 80) {
+  // Skip survival action, let auto-eat handle it
+ } else if (hunger > 70 && credits >= foodPrice && isBusy) {
+  // Busy but getting into health-damage territory (hunger >= 80 = -5 hp/tick)
+  // Buy food but don't interrupt — let the task continue
+  const maxAffordable = Math.floor(credits / foodPrice);
+  const foodNeeded = Math.ceil((hunger - 30) / 5) + 2; // target hunger ~30 with buffer
+  const amount = Math.min(maxAffordable, foodNeeded);
+  if (amount > 0) {
+   console.log(`[agent:${this.config.name}] EMERGENCY: buying ${amount} food while busy (hunger=${hunger.toFixed(0)})`);
+   await this.api.action(this.config.citizenId, "buy_food", { amount });
+   this.stats.fallbackActions++;
+   this.lastSurvivalBuyTick = this.stats.ticksAlive;
+   // Don't return — let the agent continue with its current task
   }
-  // If hungry but broke, gather food from current region
-  if (hunger > 50 && credits < 10) {
-    console.log(`[agent:${this.config.name}] SURVIVAL: gathering food (hunger=${hunger.toFixed(0)}, credits=${credits})`);
+ } else if (hunger > 60 && credits >= foodPrice && !isBusy && (ticksSinceLastBuy >= 3)) {
+  const maxAffordable = Math.floor(credits / foodPrice);
+  // Buy enough to get hunger below 20 and have a buffer (each food = -5 hunger, auto-eats 2/tick)
+  const foodNeeded = Math.ceil((hunger - 10) / 5) + 2; // extra buffer
+  const amount = Math.min(maxAffordable, foodNeeded);
+  if (amount > 0) {
+   console.log(`[agent:${this.config.name}] SURVIVAL: buying ${amount} food (hunger=${hunger.toFixed(0)}, credits=${credits}, foodOnHand=${foodOnHand})`);
+   const buyResult = await this.api.action(this.config.citizenId, "buy_food", { amount });
+   this.stats.fallbackActions++;
+   this.lastSurvivalBuyTick = this.stats.ticksAlive;
+   // If buy failed (no food in region), try gathering instead
+   if (!buyResult.success) {
+    console.log(`[agent:${this.config.name}] SURVIVAL: buy failed, gathering food instead`);
     await this.api.action(this.config.citizenId, "gather", { resourceType: "food" });
-    this.stats.fallbackActions++;
+   }
+   return;
+  }
+ }
+ // If hungry but can't afford food, gather food from current region
+ if (hunger > 30 && credits < foodPrice) {
+  console.log(`[agent:${this.config.name}] SURVIVAL: gathering food (hunger=${hunger.toFixed(0)}, credits=${credits})`);
+  await this.api.action(this.config.citizenId, "gather", { resourceType: "food" });
+  this.stats.fallbackActions++;
     return;
   }
 
@@ -204,10 +242,84 @@ export class Agent {
         return;
       }
 
-      this.state = "acting";
-      if (parsed.action === "wait") return;
+ this.state = "acting";
+ if (parsed.action === "wait") return;
 
-      await this.executeAction(parsed.action, parsed.params);
+ // PRODUCTIVITY CHECK: If the LLM chose travel/buy_food but we're in a good region,
+ // override to gather the priority resource instead (agents get stuck in travel loops)
+ // Also: if the agent has 3+ of a resource the project needs, contribute it first
+ const citizen = this.lastObserveOutput.citizen as Record<string, unknown> | undefined;
+ const inventory = (citizen?.inventory as Record<string, number>) ?? {};
+ const project = this.lastObserveOutput.projectProgress as Record<string, unknown> | undefined;
+ const currentStage = project?.currentStage as Record<string, unknown> | undefined;
+ const required = currentStage?.requiredResources as Record<string, number> | undefined;
+ const contributed = currentStage?.contributedResources as Record<string, number> | undefined;
+
+ // Contribute resources if we have 3+ that the project needs
+ if (required && !this.currentTask) {
+  for (const [resource, needed] of Object.entries(required)) {
+   const have = inventory[resource] ?? 0;
+   const alreadyGiven = contributed?.[resource] ?? 0;
+   if (have >= 3 && needed > alreadyGiven) {
+    const amount = Math.min(have, needed - alreadyGiven);
+    console.log(`[agent:${this.config.name}] PRODUCTIVITY: contributing ${amount} ${resource} to project (have ${have})`);
+    await this.executeAction("contribute", { resourceType: resource, amount, labor: 1 });
+    return;
+   }
+  }
+ }
+
+ if ((parsed.action === "travel" || parsed.action === "buy_food") && !this.currentTask) {
+  const priorityResource = (this.lastObserveOutput.projectPriorityResource as string) ?? "wood";
+  const region = this.lastObserveOutput.region as Record<string, unknown> | undefined;
+  const biome = region?.biome as string ?? "";
+  const connections = region?.connections as Array<Record<string, string>> ?? [];
+  // Check if current biome has the priority resource
+  const biomeResources: Record<string, string[]> = {
+   forest: ["wood", "food"],
+   coast: ["food", "energy"],
+   mountains: ["ore", "energy"],
+   plains: ["food"],
+   marsh: ["food"],
+   settlement: ["energy"],
+  };
+  const available = biomeResources[biome] ?? [];
+  if (available.includes(priorityResource)) {
+   console.log(`[agent:${this.config.name}] PRODUCTIVITY: overriding ${parsed.action} → gather ${priorityResource} (biome=${biome} has it)`);
+   await this.executeAction("gather", { resourceType: priorityResource });
+   return;
+  } else if (parsed.action === "buy_food" && !available.includes(priorityResource) && connections.length > 0) {
+   // Agent is in a biome that DOESN'T have the priority resource and is wasting credits on food
+   // Redirect to travel to a biome that DOES have it
+   const targetBiomes: Record<string, string[]> = {
+    wood: ["forest"],
+    food: ["forest", "coast", "plains", "marsh"],
+    ore: ["mountains"],
+    energy: ["mountains", "coast", "settlement"],
+   };
+   const targetBiomeNames = targetBiomes[priorityResource] ?? ["forest"];
+   // Find a connected region with the right biome
+   // We don't have the full region list in the observe output, so use known mapping
+   const regionBiomeMap: Record<string, string> = {
+    "region-1": "marsh",    // Eastern Marsh
+    "region-2": "plains",   // Central Plains
+    "region-3": "coast",    // Southern Coast
+    "region-4": "mountains", // Western Mountains
+    "region-5": "settlement", // Hillside Settlement
+    "region-6": "forest",   // Northern Forest
+    "region-7": "forest",   // Deep Woods
+   };
+   const connIds = connections.map(c => c.id ?? "");
+   const targetRegion = connIds.find(id => targetBiomeNames.includes(regionBiomeMap[id] ?? ""));
+   if (targetRegion) {
+    console.log(`[agent:${this.config.name}] PRODUCTIVITY: overriding buy_food → travel to ${targetRegion} (need ${priorityResource}, current biome=${biome} doesn't have it)`);
+    await this.executeAction("travel", { destination: targetRegion });
+    return;
+   }
+  }
+ }
+
+ await this.executeAction(parsed.action, parsed.params);
     } catch (err) {
       if ((err as Error).message === "Aborted") throw err;
       this.llmConsecutiveFailures++;
@@ -283,8 +395,12 @@ export class Agent {
       }
     }
 
-    // Gather the most-needed resource
-    if (required) {
+  // Gather the most-needed resource — use projectPriorityResource if available
+  const priorityResource = this.lastObserveOutput.projectPriorityResource as string | null;
+  if (priorityResource) {
+    console.log(`[agent:${this.config.name}] Fallback: gathering ${priorityResource} (project priority)`);
+    await this.api.action(this.config.citizenId, "gather", { resourceType: priorityResource });
+  } else if (required) {
       let bestResource = "food";
       let bestDeficit = 0;
       for (const [resource, needed] of Object.entries(required)) {

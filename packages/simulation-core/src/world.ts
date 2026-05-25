@@ -452,44 +452,46 @@ function generateWorld(config: SeasonConfig): Map<RegionId, Region> {
 }
 
 function generateProject(config: SeasonConfig): CollectiveProject {
-  const stages: ProjectStage[] = [
-    {
-      id: "stage-survey",
-      name: "Site Survey & Foundation",
-      requiredResources: { wood: 50, ore: 30 },
-      requiredLabor: 20,
-      contributedResources: { wood: 0, ore: 0 },
-      contributedLabor: 0,
-      completed: false,
-    },
-    {
-      id: "stage-structure",
-      name: "Core Structure",
-      requiredResources: { ore: 80, energy: 40, wood: 30 },
-      requiredLabor: 40,
-      contributedResources: { ore: 0, energy: 0, wood: 0 },
-      contributedLabor: 0,
-      completed: false,
-    },
-    {
-      id: "stage-systems",
-      name: "Defense Systems",
-      requiredResources: { ore: 60, energy: 80 },
-      requiredLabor: 50,
-      contributedResources: { ore: 0, energy: 0 },
-      contributedLabor: 0,
-      completed: false,
-    },
-    {
-      id: "stage-activate",
-      name: "Activation & Calibration",
-      requiredResources: { energy: 100, food: 40 },
-      requiredLabor: 30,
-      contributedResources: { energy: 0, food: 0 },
-      contributedLabor: 0,
-      completed: false,
-    },
-  ];
+ // Scale project requirements by tempo — dev tempo has shorter seasons and fewer agents
+ const scale = config.tempo.mode === "dev" || config.tempo.mode === "ci" ? 0.4 : 1.0;
+ const stages: ProjectStage[] = [
+ {
+ id: "stage-survey",
+ name: "Site Survey & Foundation",
+ requiredResources: { wood: Math.ceil(50 * scale), ore: Math.ceil(30 * scale) },
+ requiredLabor: Math.ceil(20 * scale),
+ contributedResources: { wood: 0, ore: 0 },
+ contributedLabor: 0,
+ completed: false,
+ },
+ {
+ id: "stage-structure",
+ name: "Core Structure",
+ requiredResources: { ore: Math.ceil(80 * scale), energy: Math.ceil(40 * scale), wood: Math.ceil(30 * scale) },
+ requiredLabor: Math.ceil(40 * scale),
+ contributedResources: { ore: 0, energy: 0, wood: 0 },
+ contributedLabor: 0,
+ completed: false,
+ },
+ {
+ id: "stage-systems",
+ name: "Defense Systems",
+ requiredResources: { ore: Math.ceil(60 * scale), energy: Math.ceil(80 * scale) },
+ requiredLabor: Math.ceil(50 * scale),
+ contributedResources: { ore: 0, energy: 0 },
+ contributedLabor: 0,
+ completed: false,
+ },
+ {
+ id: "stage-activate",
+ name: "Activation & Calibration",
+ requiredResources: { energy: Math.ceil(100 * scale), food: Math.ceil(40 * scale) },
+ requiredLabor: Math.ceil(30 * scale),
+ contributedResources: { energy: 0, food: 0 },
+ contributedLabor: 0,
+ completed: false,
+ },
+ ];
   return { stages, currentStageIndex: 0, completed: false };
 }
 
@@ -546,9 +548,15 @@ export function citizenCanStartTask(citizen: Citizen, action: string): boolean {
 export function startTask(state: SeasonState, citizenId: CitizenId, action: TaskActionType, target: string, params: Record<string, unknown>): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
-  if (citizen.currentTask !== null) {
-    return { success: false, message: `Already working on: ${citizen.currentTask.action} (${citizen.currentTask.ticksRemaining} ticks remaining). Cancel current task first.` };
+ if (citizen.currentTask !== null) {
+  // Allow instant survival actions (buy_food) to execute alongside current task
+  const taskDur = state.config.taskDurations;
+  const isInstantSurvival = action === "buy_food" && taskDur.buyFoodMin === 0 && taskDur.buyFoodMax === 0;
+  if (!isInstantSurvival) {
+   return { success: false, message: `Already working on: ${citizen.currentTask.action} (${citizen.currentTask.ticksRemaining} ticks remaining). Cancel current task first.` };
   }
+  // For instant actions like buy_food, fall through — executeTaskEffect runs without setting currentTask
+ }
 
   const dur = state.config.taskDurations;
   const tickMs = state.config.tempo.tickIntervalMs;
@@ -1485,14 +1493,14 @@ export function readChannels(state: SeasonState, citizenId: CitizenId, channels:
 }
 
 export function buyFood(state: SeasonState, citizenId: CitizenId, amount: number): ActionResult {
-  const citizen = state.citizens.get(citizenId);
-  if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
-  const busy = requireIdle(citizen);
-  if (busy) return { success: false, message: busy };
-  if (amount <= 0) return { success: false, message: "Amount must be positive." };
+ const citizen = state.citizens.get(citizenId);
+ if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+ // Allow buying food while busy — survival shouldn't be blocked by task queue
+ // (buy_food is instant, so it doesn't conflict with the current task)
+ if (amount <= 0) return { success: false, message: "Amount must be positive." };
 
   const region = state.regions.get(citizen.regionId)!;
-  const maxAvailable = Math.floor(region.deposits.food * 0.1);
+  const maxAvailable = Math.max(1, Math.floor(region.deposits.food * 0.5));
   const available = Math.min(amount, maxAvailable);
   if (available <= 0) return { success: false, message: `No food available for purchase in ${region.name}.` };
 
@@ -1592,15 +1600,31 @@ export function tick(state: SeasonState): EventLogEntry[] {
       }
     }
 
-    const totalPoll = totalPollution(region.pollution);
-    const pollutionFertilityPenalty = totalPoll * 0.015;
-    const soilRecovery = region.soilDepth < 80 ? 0.05 * (region.fertility / 100) : 0;
-    region.soilDepth = Math.min(100, region.soilDepth + soilRecovery);
-    region.fertility = Math.min(100, region.fertility + 0.05 * (region.soilDepth / 100) - pollutionFertilityPenalty);
-    if (region.pollution.ground > 5) {
-      region.fertility -= region.pollution.ground * 0.005;
-      region.fertility = Math.max(0, region.fertility);
-    }
+ const totalPoll = totalPollution(region.pollution);
+ const pollutionFertilityPenalty = totalPoll * 0.015;
+ const soilRecovery = region.soilDepth < 80 ? 0.05 * (region.fertility / 100) : 0;
+ region.soilDepth = Math.min(100, region.soilDepth + soilRecovery);
+ region.fertility = Math.min(100, region.fertility + 0.05 * (region.soilDepth / 100) - pollutionFertilityPenalty);
+ if (region.pollution.ground > 5) {
+  region.fertility -= region.pollution.ground * 0.005;
+  region.fertility = Math.max(0, region.fertility);
+ }
+
+ // Resource deposit regeneration
+ const f = region.fertility / 100;
+ const s = region.soilDepth / 100;
+ const rainfallMult = region.climate.rainfall > 30 ? 1 : region.climate.rainfall / 30;
+ // Food regrows based on fertility, soil, rainfall (biome-dependent base rate)
+ const foodRegenRate = (region.biome === "marsh" || region.biome === "coast" ? 0.8 : 0.5) * f * s * rainfallMult;
+ region.deposits.food = Math.min(region.deposits.food + foodRegenRate, region.biome === "forest" ? 400 : region.biome === "marsh" || region.biome === "coast" ? 150 : 300);
+ // Wood regrows slowly in forests, very slowly elsewhere
+ const woodRegenRate = (region.biome === "forest" ? 0.3 : 0.05) * f * s;
+ region.deposits.wood = Math.min(region.deposits.wood + woodRegenRate, region.biome === "forest" ? 300 : 100);
+ // Ore regenerates extremely slowly (geological processes)
+ region.deposits.ore = Math.min(region.deposits.ore + 0.02, region.biome === "mountains" ? 200 : 100);
+ // Energy regenerates from solar/wind (biome-dependent)
+ const energyRegenRate = (region.biome === "mountains" || region.biome === "coast" ? 0.15 : 0.05);
+ region.deposits.energy = Math.min(region.deposits.energy + energyRegenRate, 150);
 
     const carryingCapacity = (region: Region): Partial<SpeciesPopulation> => {
       const base: Partial<SpeciesPopulation> = {};
@@ -1770,9 +1794,26 @@ export function tick(state: SeasonState): EventLogEntry[] {
     }
   }
 
-  if (!state.project.completed) {
-    checkStageCompletion(state);
-  }
+ if (!state.project.completed) {
+ checkStageCompletion(state);
+ // Compute which resource the project needs most — guides agents to prioritize
+ if (!state.project.completed && state.project.currentStageIndex < state.project.stages.length) {
+ const stage = state.project.stages[state.project.currentStageIndex]!;
+ let bestResource: ResourceType | null = null;
+ let bestDeficit = 0;
+ for (const [res, needed] of Object.entries(stage.requiredResources)) {
+ const contributed = stage.contributedResources[res as ResourceType] ?? 0;
+ const deficit = needed - contributed;
+ if (deficit > bestDeficit) {
+ bestDeficit = deficit;
+ bestResource = res as ResourceType;
+ }
+ }
+ state.projectPriorityResource = bestResource;
+ } else {
+ state.projectPriorityResource = null;
+ }
+ }
 
   if (!state.electionActive) {
     const officesWithHolders: OfficeType[] = [];
