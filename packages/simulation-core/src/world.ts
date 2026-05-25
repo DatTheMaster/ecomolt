@@ -157,7 +157,7 @@ export interface SeasonConfig {
 }
 
 export function computeHungerPerTick(tempo: TempoConfig): number {
-  const targetHungerPerDay = 15; // ~6.7 in-game days to reach 100 hunger (gives agents time)
+  const targetHungerPerDay = 8; // ~12.5 in-game days to reach 100 hunger (gives LLM agents time to act)
   const ticksPerDay = (86400 / tempo.tickIntervalMs);
   return ticksPerDay > 0 ? targetHungerPerDay / ticksPerDay : 1;
 }
@@ -1699,11 +1699,12 @@ export function tick(state: SeasonState): EventLogEntry[] {
   // Basic income: 5 credits per tick to ensure agents can afford food
   citizen.credits += 5;
 
-    if (citizen.inventory.food > 0) {
-      const eaten = Math.min(2, citizen.inventory.food);
-      citizen.inventory.food -= eaten;
-      citizen.hunger = Math.max(0, citizen.hunger - eaten * 5);
-    }
+ if (citizen.inventory.food > 0 && citizen.hunger > 30) {
+ // Only eat when actually hungry — prevents wasting food at low hunger
+ const eaten = Math.min(2, citizen.inventory.food);
+ citizen.inventory.food -= eaten;
+ citizen.hunger = Math.max(0, citizen.hunger - eaten * 5);
+ }
 
     if (citizen.hunger >= 80) {
       citizen.health -= 5;
