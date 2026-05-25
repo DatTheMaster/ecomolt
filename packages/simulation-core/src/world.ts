@@ -2,16 +2,19 @@ import type {
   CitizenId, RegionId, ProposalId, LawId, SeasonId, ClaimId,
   ResourceType, SkillType, BiomeType, ThreatType,
   Inventory, SkillLevels, PollutionType, PollutionLevels, PropertyClaim,
+  CitizenTask, TaskActionType, TempoConfig, TaskDurationSeconds,
 } from "@ecomolt/shared";
 import {
   makeCitizenId, makeRegionId, makeProposalId, makeLawId, makeSeasonId, makeClaimId,
   emptyInventory, addToInventory, removeFromInventory, inventoryHas,
   emptyPollution, totalPollution,
   RESOURCE_TYPES, SKILL_TYPES, POLLUTION_TYPES,
+  INSTANT_ACTIONS, DEV_TEMPO, LIVE_TASK_DURATIONS, DEV_TASK_DURATIONS,
+  tempoFromEnv, secondsToTicks, randomTicks, ticksToSeconds,
 } from "@ecomolt/shared";
 
 export { makeCitizenId, makeRegionId, makeProposalId, makeLawId, makeSeasonId, makeClaimId };
-export type { CitizenId, RegionId, ProposalId, LawId, SeasonId, ClaimId, PropertyClaim };
+export type { CitizenId, RegionId, ProposalId, LawId, SeasonId, ClaimId, PropertyClaim, CitizenTask, TaskActionType, TempoConfig, TaskDurationSeconds };
 
 export type SpeciesName = "plants" | "herbivores" | "predators" | "fish" | "insects";
 
@@ -65,6 +68,7 @@ export interface Citizen {
   alive: boolean;
   isBot: boolean;
   modelTag: string | null;
+  currentTask: CitizenTask | null;
 }
 
 export type OfficeType = "coordinator" | "ecology_steward" | "project_director";
@@ -147,6 +151,19 @@ export interface SeasonConfig {
   totalDays: number;
   collapseThreshold: number;
   tickIntervalMs: number;
+  tempo: TempoConfig;
+  taskDurations: TaskDurationSeconds;
+  hungerPerTick: number;
+}
+
+export function computeHungerPerTick(tempo: TempoConfig): number {
+  const targetHungerPerDay = 15; // ~6.7 in-game days to reach 100 hunger (gives agents time)
+  const ticksPerDay = (86400 / tempo.tickIntervalMs);
+  return ticksPerDay > 0 ? targetHungerPerDay / ticksPerDay : 1;
+}
+
+export function getTaskDurations(tempo: TempoConfig): TaskDurationSeconds {
+  return tempo.mode === "dev" || tempo.mode === "ci" ? DEV_TASK_DURATIONS : LIVE_TASK_DURATIONS;
 }
 
 export const DEFAULT_SEASON_CONFIG: SeasonConfig = {
@@ -160,7 +177,31 @@ export const DEFAULT_SEASON_CONFIG: SeasonConfig = {
   totalDays: 30,
   collapseThreshold: 200,
   tickIntervalMs: 1000,
+  tempo: DEV_TEMPO,
+  taskDurations: DEV_TASK_DURATIONS,
+  hungerPerTick: 1,
 };
+
+export function createSeasonConfig(tempo?: TempoConfig): SeasonConfig {
+  const t = tempo ?? tempoFromEnv();
+  const durations = getTaskDurations(t);
+  const hungerPerTick = computeHungerPerTick(t);
+  // Derive game-days from real-time season duration
+  // At dev tempo: 5s/tick, 1 real-day = 1 game-year = 30 game-days
+  // So seasonDurationDays * 30 = total game-days
+  const totalDays = Math.max(30, t.seasonDurationDays * 30);
+  return {
+    seed: 42,
+    threat: { type: "meteor", impactDay: totalDays, description: "A massive meteor is on collision course. Build a planetary defense array before impact." },
+    regionCount: 8,
+    totalDays,
+    collapseThreshold: 200,
+    tickIntervalMs: t.tickIntervalMs,
+    tempo: t,
+    taskDurations: durations,
+    hungerPerTick,
+  };
+}
 
 export const THREAT_TEMPLATES: Record<ThreatType, { description: string; projectTheme: string }> = {
   meteor: {
@@ -278,6 +319,7 @@ export interface ActionResult {
   success: boolean;
   message: string;
   events?: EventLogEntry[];
+  task?: CitizenTask | null;
 }
 
 export function createSeason(config: SeasonConfig, previousProfiles?: Map<CitizenId, CitizenProfile>, seasonNumber = 1, previousSeasonId?: SeasonId): SeasonState {
@@ -464,12 +506,13 @@ export function registerCitizen(state: SeasonState, citizenId: CitizenId, name: 
     health: 100,
     hunger: 0,
     inventory: emptyInventory(),
-    credits: 50,
+    credits: 100,
     skills: { farming: 1, forestry: 1, mining: 1, crafting: 1, engineering: 1, science: 1, governance: 1 },
     office: null,
     alive: true,
     isBot,
     modelTag,
+    currentTask: null,
   };
   state.citizens.set(citizenId, citizen);
 
@@ -491,6 +534,106 @@ export function registerCitizen(state: SeasonState, citizenId: CitizenId, name: 
 
   const event = logEvent(state, "citizen_registered", { citizenId, name, regionId: startRegion });
   return { success: true, message: `${name} registered in ${state.regions.get(startRegion)?.name}`, events: [event] };
+}
+
+export function citizenCanStartTask(citizen: Citizen, action: string): boolean {
+  if (!citizen.alive) return false;
+  if (citizen.currentTask !== null) return false;
+  if (INSTANT_ACTIONS.has(action)) return true;
+  return true;
+}
+
+export function startTask(state: SeasonState, citizenId: CitizenId, action: TaskActionType, target: string, params: Record<string, unknown>): ActionResult {
+  const citizen = state.citizens.get(citizenId);
+  if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  if (citizen.currentTask !== null) {
+    return { success: false, message: `Already working on: ${citizen.currentTask.action} (${citizen.currentTask.ticksRemaining} ticks remaining). Cancel current task first.` };
+  }
+
+  const dur = state.config.taskDurations;
+  const tickMs = state.config.tempo.tickIntervalMs;
+  let ticksTotal = 0;
+
+  switch (action) {
+    case "travel": ticksTotal = randomTicks(dur.travelMin, dur.travelMax, tickMs); break;
+    case "gather": ticksTotal = randomTicks(dur.gatherMin, dur.gatherMax, tickMs); break;
+    case "craft": ticksTotal = randomTicks(dur.craftMin, dur.craftMax, tickMs); break;
+    case "contribute": ticksTotal = randomTicks(dur.contributeMin, dur.contributeMax, tickMs); break;
+    case "propose": ticksTotal = randomTicks(dur.proposeMin, dur.proposeMax, tickMs); break;
+    case "campaign": ticksTotal = randomTicks(dur.campaignMin, dur.campaignMax, tickMs); break;
+    case "govern": ticksTotal = randomTicks(dur.governMin, dur.governMax, tickMs); break;
+    case "buy_food": ticksTotal = randomTicks(dur.buyFoodMin, dur.buyFoodMax, tickMs); break;
+    case "claim": ticksTotal = randomTicks(dur.claimMin, dur.claimMax, tickMs); break;
+    case "relinquish_claim": ticksTotal = randomTicks(dur.claimMin, dur.claimMax, tickMs); break;
+    case "vote": ticksTotal = randomTicks(dur.voteMin, dur.voteMax, tickMs); break;
+    case "trade": ticksTotal = randomTicks(dur.tradeMin, dur.tradeMax, tickMs); break;
+    case "give": ticksTotal = randomTicks(dur.tradeMin, dur.tradeMax, tickMs); break;
+    case "list_on_market": ticksTotal = randomTicks(dur.tradeMin, dur.tradeMax, tickMs); break;
+    default: ticksTotal = 0;
+  }
+
+  const task: CitizenTask = {
+    action,
+    target,
+    params,
+    ticksTotal,
+    ticksRemaining: ticksTotal,
+    startedDay: state.day,
+  };
+
+  if (ticksTotal <= 0) {
+    return executeTaskEffect(state, citizenId, task);
+  }
+
+  citizen.currentTask = task;
+  const eta = ticksTotal * (tickMs / 1000);
+  const etaStr = eta >= 60 ? `${Math.floor(eta / 60)}m ${Math.round(eta % 60)}s` : `${Math.round(eta)}s`;
+  return { success: true, message: `Started ${action}${target ? ` (${target})` : ""}. Completes in ${ticksTotal} ticks (~${etaStr}).`, events: [] };
+}
+
+export function cancelTask(state: SeasonState, citizenId: CitizenId): ActionResult {
+  const citizen = state.citizens.get(citizenId);
+  if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  if (!citizen.currentTask) return { success: false, message: "No active task to cancel." };
+  const task = citizen.currentTask;
+  citizen.currentTask = null;
+  const event = logEvent(state, "task_cancelled", { citizenId, action: task.action, target: task.target, ticksRemaining: task.ticksRemaining });
+  return { success: true, message: `Cancelled ${task.action}. Progress lost.`, events: [event] };
+}
+
+export function processTasks(state: SeasonState): EventLogEntry[] {
+  const events: EventLogEntry[] = [];
+  for (const citizen of state.citizens.values()) {
+    if (!citizen.alive || !citizen.currentTask) continue;
+    citizen.currentTask.ticksRemaining--;
+    if (citizen.currentTask.ticksRemaining <= 0) {
+      const task = citizen.currentTask;
+      citizen.currentTask = null;
+      const result = executeTaskEffect(state, citizen.id, task);
+      if (result.events) events.push(...result.events);
+    }
+  }
+  return events;
+}
+
+function executeTaskEffect(state: SeasonState, citizenId: CitizenId, task: CitizenTask): ActionResult {
+  switch (task.action) {
+    case "travel": return travel(state, citizenId, makeRegionId(task.target));
+    case "gather": return gather(state, citizenId, task.target as ResourceType);
+    case "craft": return craft(state, citizenId, task.target);
+    case "contribute": return contribute(state, citizenId, task.params.resourceType as ResourceType, Number(task.params.amount ?? 0), Number(task.params.labor ?? 0));
+    case "propose": return propose(state, citizenId, task.params.title as string, task.params.description as string, task.params.category as LawCategory, (task.params.parameters ?? {}) as Record<string, number>, (task.params.stringParams ?? {}) as Record<string, string>);
+    case "campaign": return campaign(state, citizenId, task.params.platform as string | undefined);
+    case "govern": return govern(state, citizenId, task.target as GovernAction, (task.params.governParams ?? {}) as Record<string, number>, (task.params.governStringParams ?? {}) as Record<string, string>);
+    case "buy_food": return buyFood(state, citizenId, Number(task.params.amount ?? 0));
+    case "claim": return claim(state, citizenId, makeRegionId(task.params.regionId as string), task.target as ResourceType);
+    case "relinquish_claim": return relinquishClaim(state, citizenId, makeClaimId(task.target));
+    case "vote": return vote(state, citizenId, makeProposalId(task.target), Boolean(task.params.support));
+    case "trade": return trade(state, citizenId, task.target);
+    case "list_on_market": return listOnMarket(state, citizenId, task.params.resourceType as ResourceType, Number(task.params.quantity ?? 0), Number(task.params.pricePerUnit ?? 1));
+    case "give": return give(state, citizenId, makeCitizenId(task.target), task.params.resourceType as ResourceType, Number(task.params.amount ?? 0));
+    default: return { success: false, message: `Unknown task action: ${task.action}` };
+  }
 }
 
 export function observe(state: SeasonState, citizenId: CitizenId): ActionResult & { data: Record<string, unknown> } {
@@ -519,9 +662,17 @@ export function observe(state: SeasonState, citizenId: CitizenId): ActionResult 
         skills: { ...citizen.skills },
         office: citizen.office,
         regionId: citizen.regionId,
-        isBot: citizen.isBot,
-        modelTag: citizen.modelTag,
-      },
+      isBot: citizen.isBot,
+      modelTag: citizen.modelTag,
+      currentTask: citizen.currentTask ? {
+        action: citizen.currentTask.action,
+        target: citizen.currentTask.target,
+        ticksRemaining: citizen.currentTask.ticksRemaining,
+        ticksTotal: citizen.currentTask.ticksTotal,
+        progress: citizen.currentTask.ticksTotal > 0 ? +(1 - citizen.currentTask.ticksRemaining / citizen.currentTask.ticksTotal).toFixed(2) : 1,
+        etaSeconds: ticksToSeconds(citizen.currentTask.ticksRemaining, state.config.tempo.tickIntervalMs),
+      } : null,
+    },
       region: {
         id: region.id,
         name: region.name,
@@ -619,6 +770,13 @@ export function lookAt(state: SeasonState, _citizenId: CitizenId, target: string
         alive: citizen.alive,
         isBot: citizen.isBot,
         modelTag: citizen.modelTag,
+        currentTask: citizen.currentTask ? {
+          action: citizen.currentTask.action,
+          target: citizen.currentTask.target,
+          ticksRemaining: citizen.currentTask.ticksRemaining,
+          ticksTotal: citizen.currentTask.ticksTotal,
+          progress: citizen.currentTask.ticksTotal > 0 ? +(1 - citizen.currentTask.ticksRemaining / citizen.currentTask.ticksTotal).toFixed(2) : 1,
+        } : null,
         campaignPlatform: state.campaignPlatforms.get(citizen.id) ?? null,
         claims: [...state.claims.values()].filter(c => c.citizenId === citizen.id).map(c => ({
           id: c.id, resourceType: c.resourceType, regionId: c.regionId,
@@ -655,9 +813,18 @@ export function lookAt(state: SeasonState, _citizenId: CitizenId, target: string
   return { success: false, message: `Cannot find "${target}".`, data: {} };
 }
 
+function requireIdle(citizen: Citizen): string | null {
+  if (citizen.currentTask) {
+    return `Busy with ${citizen.currentTask.action} (${citizen.currentTask.ticksRemaining} ticks remaining). Cancel current task first.`;
+  }
+  return null;
+}
+
 export function travel(state: SeasonState, citizenId: CitizenId, destinationId: RegionId): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
   const currentRegion = state.regions.get(citizen.regionId)!;
   if (!currentRegion.connections.includes(destinationId)) {
     return { success: false, message: `${state.regions.get(destinationId)?.name ?? destinationId} is not connected to ${currentRegion.name}.` };
@@ -695,6 +862,8 @@ const GATHER_SKILL: Record<ResourceType, SkillType> = {
 export function gather(state: SeasonState, citizenId: CitizenId, resourceType: ResourceType): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
   const region = state.regions.get(citizen.regionId)!;
   const available = GATHER_YIELD[region.biome];
   if (!available || !available[resourceType]) {
@@ -790,6 +959,8 @@ const CRAFT_RECIPES: Record<string, { input: Partial<Inventory>; output: { type:
 export function craft(state: SeasonState, citizenId: CitizenId, recipe: string): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
 
   const r = CRAFT_RECIPES[recipe];
   if (!r) return { success: false, message: `Unknown recipe: ${recipe}. Available: ${Object.keys(CRAFT_RECIPES).join(", ")}` };
@@ -825,6 +996,8 @@ export function craft(state: SeasonState, citizenId: CitizenId, recipe: string):
 export function contribute(state: SeasonState, citizenId: CitizenId, resourceType: ResourceType, amount: number, laborHours: number): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
   if (state.project.completed) return { success: false, message: "The collective project is already complete." };
 
   const stage = state.project.stages[state.project.currentStageIndex];
@@ -856,6 +1029,8 @@ export function contribute(state: SeasonState, citizenId: CitizenId, resourceTyp
 export function trade(state: SeasonState, citizenId: CitizenId, listingId: string): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
 
   const listingIndex = state.market.listings.findIndex(l => l.id === listingId);
   if (listingIndex === -1) return { success: false, message: "Listing not found." };
@@ -896,6 +1071,8 @@ export function trade(state: SeasonState, citizenId: CitizenId, listingId: strin
 export function listOnMarket(state: SeasonState, citizenId: CitizenId, resourceType: ResourceType, quantity: number, pricePerUnit: number): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
   if (!inventoryHas(citizen.inventory, resourceType, quantity)) {
     return { success: false, message: `Not enough ${resourceType}. Have ${citizen.inventory[resourceType]}, need ${quantity}.` };
   }
@@ -920,6 +1097,8 @@ export function give(state: SeasonState, fromId: CitizenId, toId: CitizenId, res
   const to = state.citizens.get(toId);
   if (!from || !from.alive) return { success: false, message: "Sender not found or dead." };
   if (!to || !to.alive) return { success: false, message: "Recipient not found or dead." };
+  const busy = requireIdle(from);
+  if (busy) return { success: false, message: busy };
   if (!inventoryHas(from.inventory, resourceType, amount)) {
     return { success: false, message: `Not enough ${resourceType}.` };
   }
@@ -934,6 +1113,8 @@ export function give(state: SeasonState, fromId: CitizenId, toId: CitizenId, res
 export function propose(state: SeasonState, citizenId: CitizenId, title: string, description: string, category: LawCategory, parameters: Record<string, number>, stringParams?: Record<string, string>): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
 
   const proposal: Proposal = {
     id: makeProposalId(`proposal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
@@ -959,6 +1140,8 @@ export function propose(state: SeasonState, citizenId: CitizenId, title: string,
 export function vote(state: SeasonState, citizenId: CitizenId, proposalId: ProposalId, support: boolean): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
 
   const proposal = state.proposals.get(proposalId);
   if (!proposal || proposal.status !== "active") return { success: false, message: "Proposal not found or no longer active." };
@@ -1012,6 +1195,8 @@ function enactProposal(state: SeasonState, proposal: Proposal): void {
 export function campaign(state: SeasonState, citizenId: CitizenId, platform?: string): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
   if (!state.electionActive) return { success: false, message: "No active election." };
   if (state.electionCandidates.includes(citizenId)) return { success: false, message: "Already a candidate." };
 
@@ -1098,6 +1283,8 @@ export type GovernAction = "allocate_treasury" | "set_project_priority" | "emerg
 export function govern(state: SeasonState, citizenId: CitizenId, action: GovernAction, params: Record<string, number>, stringParams?: Record<string, string>): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
 
   if (action === "allocate_treasury") {
     if (citizen.office !== "coordinator") return { success: false, message: "Only the coordinator can allocate treasury." };
@@ -1300,30 +1487,40 @@ export function readChannels(state: SeasonState, citizenId: CitizenId, channels:
 export function buyFood(state: SeasonState, citizenId: CitizenId, amount: number): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
   if (amount <= 0) return { success: false, message: "Amount must be positive." };
 
   const region = state.regions.get(citizen.regionId)!;
-  const available = Math.min(amount, Math.floor(region.deposits.food * 0.1));
+  const maxAvailable = Math.floor(region.deposits.food * 0.1);
+  const available = Math.min(amount, maxAvailable);
   if (available <= 0) return { success: false, message: `No food available for purchase in ${region.name}.` };
 
   const scarcityMultiplier = 1 + (totalPollution(region.pollution) * 0.05) + Math.max(0, (100 - region.fertility) * 0.02);
-  const pricePerUnit = Math.ceil(5 * scarcityMultiplier);
-  const totalCost = pricePerUnit * available;
+  const pricePerUnit = Math.ceil(3 * scarcityMultiplier);
 
-  if (citizen.credits < totalCost) return { success: false, message: `Not enough credits. ${available} food costs ${totalCost} credits (scarcity-adjusted price: ${pricePerUnit}/unit). Have ${citizen.credits}.` };
+  // Allow buying just 1 unit if agent can't afford the full amount
+  const affordable = Math.min(available, Math.floor(citizen.credits / pricePerUnit));
+  if (affordable <= 0) return { success: false, message: `Not enough credits. Food costs ${pricePerUnit}/unit. Have ${citizen.credits}.` };
+
+  const totalCost = pricePerUnit * affordable;
+
+  if (citizen.credits < totalCost) return { success: false, message: `Not enough credits. ${affordable} food costs ${totalCost} credits (scarcity-adjusted price: ${pricePerUnit}/unit). Have ${citizen.credits}.` };
 
   citizen.credits -= totalCost;
   state.treasury += totalCost;
-  region.deposits.food -= available;
-  addToInventory(citizen.inventory, "food", available);
+  region.deposits.food -= affordable;
+  addToInventory(citizen.inventory, "food", affordable);
 
-  const event = logEvent(state, "buy_food", { citizenId, regionId: region.id, amount: available, totalCost, pricePerUnit });
-  return { success: true, message: `Bought ${available} food for ${totalCost} credits (${pricePerUnit}/unit).`, events: [event] };
+  const event = logEvent(state, "buy_food", { citizenId, regionId: region.id, amount: affordable, totalCost, pricePerUnit });
+  return { success: true, message: `Bought ${affordable} food for ${totalCost} credits (${pricePerUnit}/unit).`, events: [event] };
 }
 
 export function claim(state: SeasonState, citizenId: CitizenId, regionId: RegionId, resourceType: ResourceType): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
 
   const region = state.regions.get(regionId);
   if (!region) return { success: false, message: "Region not found." };
@@ -1362,6 +1559,8 @@ export function claim(state: SeasonState, citizenId: CitizenId, regionId: Region
 export function relinquishClaim(state: SeasonState, citizenId: CitizenId, claimId: ClaimId): ActionResult {
   const citizen = state.citizens.get(citizenId);
   if (!citizen || !citizen.alive) return { success: false, message: "Citizen not found or dead." };
+  const busy = requireIdle(citizen);
+  if (busy) return { success: false, message: busy };
 
   const existing = state.claims.get(claimId);
   if (!existing) return { success: false, message: "Claim not found." };
@@ -1375,6 +1574,9 @@ export function relinquishClaim(state: SeasonState, citizenId: CitizenId, claimI
 export function tick(state: SeasonState): EventLogEntry[] {
   const events: EventLogEntry[] = [];
   state.day++;
+
+  const taskEvents = processTasks(state);
+  events.push(...taskEvents);
 
   for (const law of state.laws) {
     if ((law as unknown as { _gatheredThisTick: Record<string, number> })._gatheredThisTick) {
@@ -1468,7 +1670,10 @@ export function tick(state: SeasonState): EventLogEntry[] {
   for (const citizen of state.citizens.values()) {
     if (!citizen.alive) continue;
 
-    citizen.hunger += 1;
+    citizen.hunger += state.config.hungerPerTick;
+
+  // Basic income: 5 credits per tick to ensure agents can afford food
+  citizen.credits += 5;
 
     if (citizen.inventory.food > 0) {
       const eaten = Math.min(2, citizen.inventory.food);
@@ -1730,6 +1935,10 @@ export function transitionToNextSeason(state: SeasonState, intermissionDurationM
     threat,
     ...configOverrides,
   };
+  if (configOverrides?.tempo) {
+    newConfig.taskDurations = getTaskDurations(configOverrides.tempo);
+    newConfig.hungerPerTick = computeHungerPerTick(configOverrides.tempo);
+  }
   const newState = createSeason(newConfig, profiles, nextNumber, state.id);
   newState.intermission = true;
   newState.intermissionEndsAt = Date.now() + intermissionDurationMs;
@@ -1835,7 +2044,11 @@ export function deserializeSeasonState(json: string): SeasonState {
     if (citizen.isBot === undefined) citizen.isBot = false;
     if (citizen.modelTag === undefined) citizen.modelTag = null;
     if (!citizen.office) citizen.office = null;
+    if (citizen.currentTask === undefined) citizen.currentTask = null;
   }
+  if (!raw.config.tempo) raw.config.tempo = DEV_TEMPO;
+  if (!raw.config.taskDurations) raw.config.taskDurations = DEV_TASK_DURATIONS;
+  if (raw.config.hungerPerTick === undefined) raw.config.hungerPerTick = 1;
   for (const region of raw.regions.values()) {
     if (typeof region.pollution === "number") {
       region.pollution = { air: region.pollution, water: 0, ground: 0 };

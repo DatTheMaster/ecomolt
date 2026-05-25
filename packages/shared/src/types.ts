@@ -87,3 +87,140 @@ export interface SkillLevels {
   science: number;
   governance: number;
 }
+
+export type TaskActionType =
+  | "travel" | "gather" | "craft" | "contribute"
+  | "propose" | "campaign" | "govern" | "buy_food"
+  | "claim" | "relinquish_claim"
+  | "trade" | "list_on_market" | "give" | "vote";
+
+export const INSTANT_ACTIONS = new Set(["observe", "look_at", "say", "journal", "read_channels"]);
+
+export interface CitizenTask {
+  action: TaskActionType;
+  target: string;
+  params: Record<string, unknown>;
+  ticksTotal: number;
+  ticksRemaining: number;
+  startedDay: number;
+}
+
+export type TempoMode = "live" | "dev" | "ci" | "deterministic";
+
+export interface TempoConfig {
+  mode: TempoMode;
+  tickIntervalMs: number;
+  seasonDurationDays: number;
+  yearDurationDays: number;
+  intermissionDurationMs: number;
+}
+
+export const LIVE_TEMPO: TempoConfig = {
+  mode: "live",
+  tickIntervalMs: 30000,
+  seasonDurationDays: 7,
+  yearDurationDays: 1,
+  intermissionDurationMs: 4 * 3600 * 1000,
+};
+
+export const DEV_TEMPO: TempoConfig = {
+  mode: "dev",
+  tickIntervalMs: 5000,
+  seasonDurationDays: 2,  // 60 game-days ≈ 52 min — enough for a test run
+  yearDurationDays: 1,
+  intermissionDurationMs: 30000,
+};
+
+export const CI_TEMPO: TempoConfig = {
+  mode: "ci",
+  tickIntervalMs: 10,
+  seasonDurationDays: 7,
+  yearDurationDays: 1,
+  intermissionDurationMs: 0,
+};
+
+export const DETERMINISTIC_TEMPO: TempoConfig = {
+  mode: "deterministic",
+  tickIntervalMs: 0,
+  seasonDurationDays: 7,
+  yearDurationDays: 1,
+  intermissionDurationMs: 0,
+};
+
+export function tempoFromEnv(env?: string): TempoConfig {
+  switch (env ?? process.env.TEMPO ?? "dev") {
+    case "live": return LIVE_TEMPO;
+    case "ci": return CI_TEMPO;
+    case "deterministic": return DETERMINISTIC_TEMPO;
+    default: return DEV_TEMPO;
+  }
+}
+
+export interface TaskDurationSeconds {
+  travelMin: number;
+  travelMax: number;
+  gatherMin: number;
+  gatherMax: number;
+  craftMin: number;
+  craftMax: number;
+  contributeMin: number;
+  contributeMax: number;
+  proposeMin: number;
+  proposeMax: number;
+  campaignMin: number;
+  campaignMax: number;
+  governMin: number;
+  governMax: number;
+  buyFoodMin: number;
+  buyFoodMax: number;
+  claimMin: number;
+  claimMax: number;
+  voteMin: number;
+  voteMax: number;
+  tradeMin: number;
+  tradeMax: number;
+}
+
+export const LIVE_TASK_DURATIONS: TaskDurationSeconds = {
+  travelMin: 300, travelMax: 600,
+  gatherMin: 240, gatherMax: 450,
+  craftMin: 300, craftMax: 600,
+  contributeMin: 150, contributeMax: 240,
+  proposeMin: 150, proposeMax: 300,
+  campaignMin: 90, campaignMax: 150,
+  governMin: 240, governMax: 360,
+  buyFoodMin: 90, buyFoodMax: 150,
+  claimMin: 60, claimMax: 120,
+  voteMin: 30, voteMax: 60,
+  tradeMin: 60, tradeMax: 120,
+};
+
+export const DEV_TASK_DURATIONS: TaskDurationSeconds = {
+  travelMin: 0, travelMax: 0,
+  gatherMin: 0, gatherMax: 0,
+  craftMin: 0, craftMax: 0,
+  contributeMin: 0, contributeMax: 0,
+  proposeMin: 0, proposeMax: 0,
+  campaignMin: 0, campaignMax: 0,
+  governMin: 0, governMax: 0,
+  buyFoodMin: 0, buyFoodMax: 0,
+  claimMin: 0, claimMax: 0,
+  voteMin: 0, voteMax: 0,
+  tradeMin: 0, tradeMax: 0,
+};
+
+export function secondsToTicks(seconds: number, tickIntervalMs: number): number {
+  if (tickIntervalMs <= 0) return 0;
+  return Math.ceil(seconds / (tickIntervalMs / 1000));
+}
+
+export function randomTicks(minSeconds: number, maxSeconds: number, tickIntervalMs: number): number {
+  if (minSeconds <= 0 && maxSeconds <= 0) return 0;
+  if (tickIntervalMs <= 0) return 0;
+  const seconds = minSeconds + Math.random() * (maxSeconds - minSeconds);
+  return Math.max(1, secondsToTicks(seconds, tickIntervalMs));
+}
+
+export function ticksToSeconds(ticks: number, tickIntervalMs: number): number {
+  return ticks * (tickIntervalMs / 1000);
+}

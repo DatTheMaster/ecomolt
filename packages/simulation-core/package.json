@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc",
     "test": "esbuild test.ts --bundle --platform=node --outfile=/tmp/ecomolt-sim-test.js --format=esm && node --test /tmp/ecomolt-sim-test.js",
+    "test:validation": "esbuild validation.ts --bundle --platform=node --outfile=/tmp/ecomolt-sim-validation.js --format=esm && node --test /tmp/ecomolt-sim-validation.js",
     "typecheck": "tsc --noEmit",
     "lint": "echo ok"
   },

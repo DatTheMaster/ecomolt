@@ -18,13 +18,16 @@ async function apiGet(path: string): Promise<unknown> {
   return res.json();
 }
 
-async function apiAction(citizenId: string, action: string, params: Record<string, unknown> = {}): Promise<{ success: boolean; message: string; data?: Record<string, unknown> }> {
+async function apiAction(citizenId: string, action: string, params: Record<string, unknown> = {}): Promise<{ success: boolean; message: string; data?: Record<string, unknown>; task?: Record<string, unknown> | null }> {
   const result = await apiPost("/api/action", { citizenId, action, ...params });
-  return result as { success: boolean; message: string; data?: Record<string, unknown> };
+  return result as { success: boolean; message: string; data?: Record<string, unknown>; task?: Record<string, unknown> | null };
 }
 
-function formatResult(result: { success: boolean; message: string; data?: Record<string, unknown> }) {
+function formatResult(result: { success: boolean; message: string; data?: Record<string, unknown>; task?: Record<string, unknown> | null }) {
   const content: Array<{ type: "text"; text: string }> = [{ type: "text" as const, text: result.message }];
+  if (result.task) {
+    content.push({ type: "text" as const, text: `Task queued: ${JSON.stringify(result.task, null, 2)}` });
+  }
   if (result.data && Object.keys(result.data).length > 0) {
     content.push({ type: "text" as const, text: JSON.stringify(result.data, null, 2) });
   }
@@ -233,6 +236,13 @@ export function createMcpServer(): McpServer {
     claimId: z.string().describe("ID of the claim to relinquish"),
   }, async ({ citizenId, claimId }) => {
     const result = await apiAction(citizenId, "relinquish_claim", { claimId });
+    return formatResult(result);
+  });
+
+  server.tool("cancel_task", "Cancel your current task. You lose all progress — there is no partial completion.", {
+    citizenId: z.string().describe("Your citizen ID"),
+  }, async ({ citizenId }) => {
+    const result = await apiAction(citizenId, "cancel_task");
     return formatResult(result);
   });
 

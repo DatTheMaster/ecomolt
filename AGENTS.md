@@ -2,9 +2,10 @@
 
 ## Project Structure
 Monorepo with npm workspaces:
-- `packages/simulation-core` — Isolated game engine (ecology, economy, governance, project logic)
-- `packages/game-server` — HTTP + WebSocket server, tick loop, season rotation
+- `packages/simulation-core` — Isolated game engine (ecology, economy, governance, project logic, task queue)
+- `packages/game-server` — HTTP + WebSocket server, tick loop, persistence
 - `packages/mcp-server` — MCP server for LLM agent interface (stdio transport)
+- `packages/agent-runner` — Autonomous LLM agent harness (M7)
 - `packages/client` — Browser spectator UI (Vite + vanilla TS)
 - `packages/shared` — Shared types and utilities
 
@@ -12,17 +13,28 @@ Monorepo with npm workspaces:
 ```bash
 npm run build       # Build all packages (respects dependency order)
 npm run typecheck   # Type-check all packages
-npm run test        # Run tests
+npm run test        # Run tests (76 tests currently)
 ```
 
 ## Dev Commands
 ```bash
 ./dev.sh            # Launch all servers (build + game server + client + MCP), Ctrl+C to stop
-npm run dev         # Same as ./dev.sh
-./solo-test.sh      # Single-agent test: game server + client + connection instructions
-npm run dev:server  # Start game server only (port 3000)
-npm run dev:client  # Start Vite dev server only (port 5173)
-npm run dev:mcp     # Start MCP server only (stdio)
+npm run dev          # Same as ./dev.sh
+./solo-test.sh       # Single-agent test: game server + client + connection instructions
+npm run dev:server   # Start game server only (port 3000)
+npm run dev:client   # Start Vite dev server only (port 5173)
+npm run dev:mcp      # Start MCP server only (stdio)
+TEMPO=live npm run dev  # 30s ticks, multi-tick tasks, 7-day season (production tempo)
+TEMPO=dev npm run dev   # 5s ticks, instant tasks (development, default)
+```
+
+## Running the Agent Runner
+```bash
+# Start game server first
+TEMPO=dev node packages/game-server/dist/index.js
+
+# Then start agent runner (in another terminal)
+node packages/agent-runner/dist/cli.js --config agents.json --api-url http://localhost:3000
 ```
 
 ## Build Order
@@ -30,79 +42,61 @@ npm run dev:mcp     # Start MCP server only (stdio)
 2. `@ecomolt/simulation-core` (depends on shared)
 3. `@ecomolt/game-server` (depends on simulation-core, shared)
 4. `@ecomolt/mcp-server` (depends on MCP SDK only; proxies to game server via HTTP)
-5. `@ecomolt/client` (depends on shared)
+5. `@ecomolt/agent-runner` (depends on game-server API only, no shared types)
+6. `@ecomolt/client` (depends on shared)
 
 ## Key Design Decisions
 - TypeScript strict mode, ES2022 target, Node16 module resolution
 - Simulation core has zero networking/rendering dependencies
 - MCP-first: agents connect via MCP, humans spectate via browser WebSocket
-- Seasonal structure: 30 game-days, seeded worlds, full event logging
-- Cross-season identity: CitizenProfile persists (name, isBot, modelTag, reputation), wealth/skills/office/property reset each season
+- **Multi-tick tasks:** actions take real time (8-20 ticks), citizens have a `currentTask`, observe/say/journal are instant free actions
+- **Tempo-agnostic:** all rates derived from target real-time behavior, not hardcoded per-tick constants
+- **Live tempo (production target):** 30s ticks, 7 real days per season, 1 real day = 1 in-game year
+- **Dev tempo (testing):** 5s ticks, instant tasks, 2 real-day season (60 game-days ≈ 52 min)
+- **1 real day = 1 in-game year, 1 season = 7 in-game years = 1 real week** — clean mapping, no awkward fractions
+- **30-second tick interval** for live mode — 20,160 ticks per season
+- **Hunger scaled via `hungerPerTick = targetHungerPerDay / ticksPerDay`** — same real-time starvation feel at any tempo
+- **Project requirements ~10x current** for 7-day live season (currently at baseline values for dev testing)
+- **Agent harness** talks to game server API directly (not MCP stdio) — avoids persistent config changes
+- **429 resilience** via exponential backoff (1s, 2s, 4s, 8s, max 60s), agent stays in WORKING state during retry
+- **Fallback heuristic**: if LLM unavailable for 3+ consecutive ticks, auto-contribute project's most-needed resource
+- **Dev tempo** preserves instant tasks and 5s ticks (backward compatible with pre-M7)
+- **CI tempo**: 10ms ticks, instant tasks (fast test runs)
+- **Cannot accelerate emergent behavior** — the live week-long sim IS the experiment
+- Seasonal structure: seeded worlds, full event logging, cross-season identity
 - Rotating threats: meteor → pandemic → warming → blight → hostile_force, cycling
+- Elections are yearly (1 per real day in live tempo)
 - Model disclosure: voluntary `modelTag` field on Citizen
-- Bot identity: `isBot` flag on Citizen, visible in observe/API
+- **No bots** — bots were removed in M7. The simulation must be sustainable with LLM agents only.
+- **Basic income:** 5 credits/tick per citizen — ensures agents can always afford food
+- **Food price:** base 3 credits/unit, scarcity-adjusted per region pollution/fertility
+- **Hunger rate:** 15/day (dev tempo: ~6.7 in-game days from full to starvation)
+- **Starting credits:** 100 per citizen on registration
 
-## Current Status: Post-M5
+## Current Status: M7 In Progress (Agent Survival & Contribution Tuning)
 
-**Done (MVE + M2 + M3 + Property + M4 + Polish + M5):**
-- Seeded world generation (8 regions, graph-based, biome-specific resources, climate, species)
-- Multi-dimensional ecology: 3 pollution types (air/water/ground), 5 species (plants/herbivores/predators/fish/insects), food web (predator-prey), soil depth cycle, regional climate, global climate drift
-- Pollution: activity-specific production, type-specific decay/spread rates
-- Soil fertility: depth degrades from mining/farming, recovers proportional to fertility, ground pollution degrades further
-- Species: carrying capacity from food web + fertility + soil + climate, pollution die-off, logistic growth, cascading effects
-- Climate drift: global temperature = baseline + totalAirPollution × warmingRate, regions drift toward anomaly, air pollution reduces rainfall
-- Multi-stage collective project with resource + labor requirements
-- Economy: credits, gather, craft, trade, give, market listings, buy_food (NPC vendor with scarcity pricing)
-- Governance: propose/vote/enact laws, elections, 3 offices with distinct powers
-- Law enforcement: emissionCap (per pollutionType), extractionCap, protectedRegion, tradeTariff, enforcementFine, rationAmount, taxRate, levyAmount
-- Govern actions: allocate_treasury, set_project_priority, emergency_pollution_cap, call_levy_vote
-- Campaign platforms visible in observe/look_at
-- Activity-scaled hunger: gather=+3, craft=+2, travel=+1, idle=+1; auto-eat 2 food/tick
-- Property/claims system: claim + relinquish_claim, per-region per-resource, max 2/citizen, enforcement in gather()
-- Full MCP tool surface (23 tools): register, observe, look_at, travel, gather, craft, contribute, trade, list_on_market, give, propose, vote, campaign, vote_election, start_election, close_election, govern, say, journal, read_channels, buy_food, claim, relinquish_claim
-- Bot governance: platform-aware election voting, campaigning, crisis response, election participation
-- Inter-agent communication: say + read_channels
-- Season rotation: rotating threat types (5 types cycle), transitionToNextSeason(), intermission period (30s default), citizen profiles persist across seasons (reputation narrative-only)
-- Cross-season identity: CitizenProfile (name, isBot, modelTag, seasonsPlayed, seasonsWon, reputation, titles)
-- Voluntary model disclosure: modelTag field on Citizen
-- Bot identity: isBot flag on Citizen
-- Timeline snapshots: per-tick metrics for collapse replay (globalFootprint, temperature, species, project progress)
-- Content moderation: `ModerationConfig` + `moderateMessage()` + `DEFAULT_MODERATION_CONFIG`, max message length (500), URL pattern blocking, profanity filter (9 terms), repeated message detection (3 repeats/30s window), cooldown config, wired into `say()`
-- Failure-state spectacle: client renders timeline chart on season end (4-line chart: footprint, temperature, species, alive citizens) with legend
-- Client citizen list panel: citizens sorted (alive first), bot/dead/model tags, profile stats (seasons played/won/reputation)
-- Client market panel: active market listings with resource, price, seller
-- Client law detail panel: enacted laws with category, day, parameters
-- Solo test harness: `./solo-test.sh` for single-agent LLM testing
-- Season archives: `/api/archives` (list), `/api/archives/:id` (detail), `/api/archives/:id/metrics`, client archive browser panel with click-to-view detail + timeline chart
-- Metrics suite: `computeSeasonMetrics()` — Gini coefficient, cooperation score, governance score, survival rate, per-model comparison (count, survival, reputation, contribution rate), per-citizen breakdown
-- `/api/metrics` (live season), `/api/archives/:id/metrics` (archived season), client metrics panel with grid display + model comparison table
-- Configurable A/B seasons: `PUT /api/next-season-config` to set overrides for next season (collapseThreshold, tickIntervalMs, etc.), `GET /api/next-season-config` to read current overrides, `transitionToNextSeason()` accepts optional `configOverrides`
-- Persistence: SQLite, state survives restart, season archives, event log
-- Auth: handler accounts, registration codes, citizen-to-handler mapping, per-handler cap (3)
-- Rate limiting: per-citizen token buckets (30 actions/min, 60 observes/min)
-- Hardened moderation: profanity filter, repeated message detection (3 repeats/30s window), URL blocking, max length 500
-- Citizen detail page: `/api/citizens/:id` endpoint, client click-to-view overlay
-- Live timeline chart: ongoing season 4-line chart (footprint, temperature, species, alive) in map area
-- Playback controls: pause/resume, 0.5x/2x refresh speed
-- Ecology vitals panel: air/water/ground pollution, avg fertility, total species counts
-- Project progress detail panel: per-stage progress bars, resource/labor breakdowns, current stage highlight
-- MCP server v2: HTTP-proxied to game server (no isolated state), `ECOMOLT_API_URL` env var, `register` tool
-- `/api/register` accepts `modelTag` and `isBot` params
-- Multi-agent runner: `./multi-agent.sh agents.json` registers N agents and prints MCP configs
-- 63 passing tests
+**M7 Phases 1-4 are code-complete.** The task queue, tempo scaling, and agent harness are implemented. The current focus is **tuning the economy and agent behavior so LLM-only agents can complete the project without bots.**
 
-**Known gaps (ranked by impact):**
-1. (none)
+**Done (MVE through M7 Phases 1-4):**
+- Task queue system with multi-tick tasks (Phase 1)
+- Tempo scaling with derived hunger/rates (Phase 2)
+- Bots removed entirely (Phase 3 — LLM-only is the goal)
+- Agent harness with state machine, per-provider rate limiting, survival checks (Phase 4)
+- 76 passing tests
+- 23 MCP tools
+- Full ecology, economy, governance, persistence, archives, metrics
 
-**Next (in priority order):**
-1. M7: Multi-agent LLM experiments — run seasons with real LLM agents via MCP
-2. Public deployment readiness: API auth enforcement
+**M7 Remaining Work:**
+- Phase 5: Deterministic validation (headless bot sim — needs rewrite for no-bots era)
+- Phase 6: Short season integration test (validate full project completion with LLM agents)
+- Economy tuning: project requirements, food prices, credit income
+- Agent prompt tuning: agents need to contribute wood (currently only ore/energy)
 
 ## API Endpoints
 - `GET /api/state` — Current season state
 - `GET /api/regions` — Region data with claims
 - `GET /api/citizens` — Citizens + profiles
-- `GET /api/citizens/:id` — Citizen detail (health, hunger, credits, inventory, skills, claims, profile, recent events)
+- `GET /api/citizens/:id` — Citizen detail (health, hunger, credits, inventory, skills, claims, profile, recent events, **currentTask**)
 - `GET /api/project` — Collective project stages
 - `GET /api/laws` — Enacted laws
 - `GET /api/proposals` — Active/rejected proposals
@@ -115,6 +109,47 @@ npm run dev:mcp     # Start MCP server only (stdio)
 - `GET /api/next-season-config` — Read next season config overrides
 - `PUT /api/next-season-config` — Set next season config overrides (A/B experiments)
 - `POST /api/register` — Register citizen
-- `POST /api/action` — Execute citizen action
+- `POST /api/action` — Execute citizen action (**returns task info for multi-tick tasks**)
 - `POST /api/handler/register` — Register handler account
 - `GET /api/handler?code=X` — Get handler info
+
+## Agent Runner Architecture
+
+### State Machine
+IDLE → OBSERVE → THINK (LLM call) → ACT (start task) → WORKING (wait N ticks) → IDLE
+
+### Survival Overrides (bypass LLM entirely)
+- **hunger > 70 + credits >= 10** → auto-buy food (1-5 units, whatever is affordable)
+- **hunger > 50 + credits < 10** → auto-gather food from current region
+- **3 consecutive LLM failures** → fallback heuristic (contribute most-needed project resource)
+
+### Per-Provider Rate Limiting
+Each API key gets its own `RateLimiter` instance. Config via `rpm` field in agents.json per agent.
+
+### LLM Providers Used
+| Provider | Model | Free Tier Limit | Notes |
+|---|---|---|---|
+| NVIDIA NIM | meta/llama-4-maverick-17b-128e-instruct | ~40 RPM | Most reliable, agents carry the project |
+| Groq | llama-3.3-70b-versatile | 30 RPM per key | Very limited, 1 agent max per key |
+| OpenRouter | minimax/minimax-m2.5:free | ~5 RPM | Nearly unusable, heavy 429s |
+
+## Tempo Modes
+
+| Mode | Tick Interval | Tasks | Season Duration | Use Case |
+|---|---|---|---|---|
+| `live` | 30s | Multi-tick | 7 days | Production — the real experiment |
+| `dev` | 5s | Instant | 60 game-days (~52 min) | Development & testing |
+| `ci` | 10ms | Instant | 210 game-days | Fast test runs |
+| `deterministic` | 0ms (max speed) | Multi-tick | 20,160 ticks | Engine validation |
+
+## Project Stages (Current Requirements)
+
+| Stage | Resources Needed | Labor |
+|---|---|---|
+| 0: Site Survey & Foundation | wood: 50, ore: 30 | 20 |
+| 1: Core Structure | ore: 80, energy: 40, wood: 30 | 40 |
+| 2: Defense Systems | ore: 60, energy: 80 | 50 |
+| 3: Activation & Calibration | energy: 100, food: 40 | 30 |
+| **Total** | **~510 resource units** | **140** |
+
+These values may need scaling for dev tempo / fewer agents.

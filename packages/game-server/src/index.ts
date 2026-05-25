@@ -1,51 +1,48 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import {
-  createSeason, registerCitizen, observe, lookAt, travel, gather,
-  craft, contribute, trade, listOnMarket, give, propose, vote,
-  campaign, voteInElection, startElection, closeElection, govern,
-  say, journal, tick, getSeasonSummary, readChannels, buyFood,
-  claim, relinquishClaim,
+  createSeason, registerCitizen, observe, lookAt,
+  say, journal, tick, getSeasonSummary, readChannels,
+  startElection, closeElection,
   transitionToNextSeason, checkIntermission,
   computeSeasonMetrics,
-  DEFAULT_SEASON_CONFIG,
+  DEFAULT_SEASON_CONFIG, createSeasonConfig,
   makeCitizenId, makeRegionId, makeProposalId, makeClaimId,
+  startTask, cancelTask,
   type SeasonState, type SeasonConfig, type ActionResult, type CitizenId, type RegionId, type ProposalId, type ClaimId,
-  type GovernAction, type OfficeType,
+  type GovernAction, type OfficeType, type CitizenTask,
 } from "@ecomolt/simulation-core";
-import type { ResourceType } from "@ecomolt/shared";
-import type { LawCategory } from "@ecomolt/simulation-core";
+import type { ResourceType, TempoConfig } from "@ecomolt/shared";
+import { tempoFromEnv, INSTANT_ACTIONS } from "@ecomolt/shared";
 import { Persistence, DEFAULT_PERSISTENCE_CONFIG, type PersistenceConfig } from "./persistence.js";
-import { registerBots, runBotTick, DEFAULT_BOT_CONFIG, type BotConfig } from "./bots.js";
 import { RateLimiter, DEFAULT_RATE_LIMIT_CONFIG, type RateLimitConfig } from "./rate-limiter.js";
-import type { CitizenId as CitizenIdType } from "@ecomolt/simulation-core";
 
-export { createSeason, tick, DEFAULT_SEASON_CONFIG, type SeasonState, type SeasonConfig };
+export { createSeason, tick, DEFAULT_SEASON_CONFIG, createSeasonConfig, type SeasonState, type SeasonConfig, type CitizenTask };
 
 export interface GameServerConfig {
-  port: number;
-  tickIntervalMs: number;
-  seasonConfig: SeasonConfig;
-  persistence: Partial<PersistenceConfig>;
-  persistOnTick: boolean;
-  maxCitizensPerHandler: number;
-  bots: Partial<BotConfig>;
-  seedBots: boolean;
-  rateLimit: Partial<RateLimitConfig>;
-  intermissionDurationMs: number;
+ port: number;
+ tickIntervalMs: number;
+ seasonConfig: SeasonConfig;
+ persistence: Partial<PersistenceConfig>;
+ persistOnTick: boolean;
+ maxCitizensPerHandler: number;
+ rateLimit: Partial<RateLimitConfig>;
+ intermissionDurationMs: number;
+ tempo: TempoConfig;
 }
 
+const DEFAULT_TEMPO = tempoFromEnv();
+
 export const DEFAULT_SERVER_CONFIG: GameServerConfig = {
-  port: 3000,
-  tickIntervalMs: 5000,
-  seasonConfig: DEFAULT_SEASON_CONFIG,
-  persistence: DEFAULT_PERSISTENCE_CONFIG,
-  persistOnTick: true,
-  maxCitizensPerHandler: 3,
-  bots: DEFAULT_BOT_CONFIG,
-  seedBots: true,
-  rateLimit: DEFAULT_RATE_LIMIT_CONFIG,
-  intermissionDurationMs: 30000,
+ port: 3000,
+ tickIntervalMs: DEFAULT_TEMPO.tickIntervalMs,
+ seasonConfig: createSeasonConfig(DEFAULT_TEMPO),
+ persistence: DEFAULT_PERSISTENCE_CONFIG,
+ persistOnTick: true,
+ maxCitizensPerHandler: 3,
+ rateLimit: DEFAULT_RATE_LIMIT_CONFIG,
+ intermissionDurationMs: DEFAULT_TEMPO.intermissionDurationMs,
+ tempo: DEFAULT_TEMPO,
 };
 
 export class GameServer {
@@ -54,14 +51,22 @@ export class GameServer {
   private httpServer: ReturnType<typeof createServer>;
   private wss: WebSocketServer;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
-  private clients: Set<WebSocket> = new Set();
-  persistence: Persistence;
-  private botIds: CitizenIdType[] = [];
+ private clients: Set<WebSocket> = new Set();
+ persistence: Persistence;
   private rateLimiter: RateLimiter;
   nextSeasonConfig: Partial<SeasonConfig> | null = null;
 
   constructor(config: Partial<GameServerConfig> = {}) {
-    this.config = { ...DEFAULT_SERVER_CONFIG, ...config, seasonConfig: { ...DEFAULT_SEASON_CONFIG, ...config.seasonConfig } };
+    const tempo = config.tempo ?? tempoFromEnv();
+    const seasonConfig = config.seasonConfig ?? createSeasonConfig(tempo);
+    this.config = {
+      ...DEFAULT_SERVER_CONFIG,
+      ...config,
+      tempo,
+      tickIntervalMs: config.tickIntervalMs ?? tempo.tickIntervalMs,
+      seasonConfig,
+      intermissionDurationMs: config.intermissionDurationMs ?? tempo.intermissionDurationMs,
+    };
     this.persistence = new Persistence(this.config.persistence);
 
     const saved = this.persistence.loadLiveState();
@@ -75,21 +80,9 @@ export class GameServer {
       }
       this.state = createSeason(this.config.seasonConfig);
       this.persistence.saveLiveState(this.state);
-    }
+ }
 
-    if (this.config.seedBots) {
-      const existingBots = [...this.state.citizens.keys()].filter(id => id.startsWith("bot-"));
-      if (existingBots.length === 0) {
-        this.botIds = registerBots(this.state, { ...DEFAULT_BOT_CONFIG, ...this.config.bots });
-        console.log(`Seeded ${this.botIds.length} bot citizens`);
-        this.persistence.saveLiveState(this.state);
-      } else {
-        this.botIds = existingBots as CitizenIdType[];
-        console.log(`Found ${this.botIds.length} existing bot citizens`);
-      }
-    }
-
-    this.rateLimiter = new RateLimiter({ ...DEFAULT_RATE_LIMIT_CONFIG, ...this.config.rateLimit });
+ this.rateLimiter = new RateLimiter({ ...DEFAULT_RATE_LIMIT_CONFIG, ...this.config.rateLimit });
 
     this.httpServer = createServer(this.handleRequest.bind(this));
     this.wss = new WebSocketServer({ server: this.httpServer });
@@ -141,13 +134,9 @@ export class GameServer {
           this._transitioning = false;
         }
         return;
-      }
+ }
 
-      if (this.botIds.length > 0) {
-        runBotTick(this.state, this.botIds, { ...DEFAULT_BOT_CONFIG, ...this.config.bots });
-      }
-
-      const events = tick(this.state);
+ const events = tick(this.state);
       this.broadcast({ type: "tick", day: this.state.day, events: events.map(e => ({ ...e, data: { ...e.data } })) });
 
       if (this.config.persistOnTick) {
@@ -161,14 +150,13 @@ export class GameServer {
 
   private _transitioning = false;
 
-  private reRegisterCitizens(): void {
-    for (const [id, profile] of this.state.citizenProfiles) {
-      if (!this.state.citizens.has(id)) {
-        registerCitizen(this.state, id, profile.name, profile.isBot, profile.modelTag);
-      }
-    }
-    this.botIds = [...this.state.citizens.keys()].filter(id => id.startsWith("bot-")) as CitizenIdType[];
-  }
+ private reRegisterCitizens(): void {
+ for (const [id, profile] of this.state.citizenProfiles) {
+ if (!this.state.citizens.has(id)) {
+ registerCitizen(this.state, id, profile.name, profile.isBot, profile.modelTag);
+ }
+ }
+ }
 
   private broadcast(data: unknown): void {
     const msg = JSON.stringify(data);
@@ -253,6 +241,13 @@ export class GameServer {
       health: citizen.health, hunger: citizen.hunger, credits: citizen.credits,
       inventory: { ...citizen.inventory }, skills: { ...citizen.skills },
       office: citizen.office, alive: citizen.alive, isBot: citizen.isBot, modelTag: citizen.modelTag,
+      currentTask: citizen.currentTask ? {
+        action: citizen.currentTask.action,
+        target: citizen.currentTask.target,
+        ticksRemaining: citizen.currentTask.ticksRemaining,
+        ticksTotal: citizen.currentTask.ticksTotal,
+        progress: citizen.currentTask.ticksTotal > 0 ? +(1 - citizen.currentTask.ticksRemaining / citizen.currentTask.ticksTotal).toFixed(2) : 1,
+      } : null,
       profile: profile ? { seasonsPlayed: profile.seasonsPlayed, seasonsWon: profile.seasonsWon, reputation: profile.reputation, titles: profile.titles } : null,
       claims: claims.map(c => ({ id: c.id, regionId: c.regionId, regionName: this.state.regions.get(c.regionId)?.name ?? c.regionId, resourceType: c.resourceType, claimedDay: c.claimedDay })),
       recentEvents: citizenEvents.map(e => ({ day: e.day, type: e.type, data: { ...e.data } })),
@@ -394,51 +389,63 @@ export class GameServer {
   }
 
   executeAction(citizenId: CitizenId, action: string, params: Record<string, unknown>): ActionResult {
+    if (action === "cancel_task") {
+      return cancelTask(this.state, citizenId);
+    }
+
+    if (INSTANT_ACTIONS.has(action)) {
+      switch (action) {
+        case "observe":
+          return observe(this.state, citizenId);
+        case "look_at":
+          return lookAt(this.state, citizenId, String(params.target ?? ""));
+        case "say":
+          return say(this.state, citizenId, String(params.channel ?? "global"), String(params.message ?? ""));
+        case "journal":
+          return journal(this.state, citizenId, String(params.entry ?? ""));
+        case "read_channels":
+          return readChannels(this.state, citizenId, (params.channels ?? []) as string[], Number(params.limit ?? 20) || undefined);
+        default:
+          return { success: false, message: `Unknown instant action: ${action}` };
+      }
+    }
+
     switch (action) {
-      case "observe":
-        return observe(this.state, citizenId);
-      case "look_at":
-        return lookAt(this.state, citizenId, String(params.target ?? ""));
       case "travel":
-        return travel(this.state, citizenId, makeRegionId(String(params.destination ?? "")));
+        return startTask(this.state, citizenId, "travel", String(params.destination ?? ""), {});
       case "gather":
-        return gather(this.state, citizenId, String(params.resourceType ?? "food") as ResourceType);
+        return startTask(this.state, citizenId, "gather", String(params.resourceType ?? "food"), { resourceType: String(params.resourceType ?? "food") });
       case "craft":
-        return craft(this.state, citizenId, String(params.recipe ?? ""));
+        return startTask(this.state, citizenId, "craft", String(params.recipe ?? ""), { recipe: String(params.recipe ?? "") });
       case "contribute":
-        return contribute(this.state, citizenId, String(params.resourceType ?? "food") as ResourceType, Number(params.amount ?? 0), Number(params.labor ?? 0));
+        return startTask(this.state, citizenId, "contribute", "", { resourceType: String(params.resourceType ?? "food"), amount: Number(params.amount ?? 0), labor: Number(params.labor ?? 0) });
       case "trade":
-        return trade(this.state, citizenId, String(params.listingId ?? ""));
+        return startTask(this.state, citizenId, "trade", String(params.listingId ?? ""), {});
       case "list_on_market":
-        return listOnMarket(this.state, citizenId, String(params.resourceType ?? "food") as ResourceType, Number(params.quantity ?? 0), Number(params.pricePerUnit ?? 1));
+        return startTask(this.state, citizenId, "list_on_market", "", { resourceType: String(params.resourceType ?? "food"), quantity: Number(params.quantity ?? 0), pricePerUnit: Number(params.pricePerUnit ?? 1) });
       case "give":
-        return give(this.state, citizenId, makeCitizenId(String(params.to ?? "")), String(params.resourceType ?? "food") as ResourceType, Number(params.amount ?? 0));
+        return startTask(this.state, citizenId, "give", String(params.to ?? ""), { resourceType: String(params.resourceType ?? "food"), amount: Number(params.amount ?? 0) });
       case "propose":
-        return propose(this.state, citizenId, String(params.title ?? ""), String(params.description ?? ""), String(params.category ?? "economic") as LawCategory, (params.parameters ?? {}) as Record<string, number>, (params.stringParams ?? {}) as Record<string, string>);
+        return startTask(this.state, citizenId, "propose", "", { title: String(params.title ?? ""), description: String(params.description ?? ""), category: String(params.category ?? "economic"), parameters: (params.parameters ?? {}) as Record<string, number>, stringParams: (params.stringParams ?? {}) as Record<string, string> });
       case "vote":
-        return vote(this.state, citizenId, makeProposalId(String(params.proposalId ?? "")), Boolean(params.support));
+        return startTask(this.state, citizenId, "vote", String(params.proposalId ?? ""), { support: Boolean(params.support) });
       case "campaign":
-        return campaign(this.state, citizenId, params.platform as string | undefined);
+        return startTask(this.state, citizenId, "campaign", "", { platform: params.platform as string | undefined });
       case "vote_election":
-        return voteInElection(this.state, citizenId, makeCitizenId(String(params.candidateId ?? "")));
+        return startTask(this.state, citizenId, "vote", String(params.candidateId ?? ""), { support: true });
       case "start_election":
-        return startElection(this.state, params.office as OfficeType | undefined);
+        startElection(this.state, params.office as OfficeType | undefined);
+        return { success: true, message: `Election started for ${this.state.electionOffice}.` };
       case "close_election":
         return closeElection(this.state);
       case "govern":
-        return govern(this.state, citizenId, String(params.governAction ?? "") as GovernAction, (params.governParams ?? {}) as Record<string, number>, (params.governStringParams ?? {}) as Record<string, string>);
-      case "say":
-        return say(this.state, citizenId, String(params.channel ?? "global"), String(params.message ?? ""));
-      case "journal":
-        return journal(this.state, citizenId, String(params.entry ?? ""));
-      case "read_channels":
-        return readChannels(this.state, citizenId, (params.channels ?? []) as string[], Number(params.limit ?? 20) || undefined);
+        return startTask(this.state, citizenId, "govern", String(params.governAction ?? ""), { governParams: (params.governParams ?? {}) as Record<string, number>, governStringParams: (params.governStringParams ?? {}) as Record<string, string> });
       case "buy_food":
-        return buyFood(this.state, citizenId, Number(params.amount ?? 0));
+        return startTask(this.state, citizenId, "buy_food", "", { amount: Number(params.amount ?? 0) });
       case "claim":
-        return claim(this.state, citizenId, makeRegionId(String(params.regionId ?? "")), String(params.resourceType ?? "food") as ResourceType);
+        return startTask(this.state, citizenId, "claim", String(params.resourceType ?? "food"), { regionId: String(params.regionId ?? "") });
       case "relinquish_claim":
-        return relinquishClaim(this.state, citizenId, makeClaimId(String(params.claimId ?? "")));
+        return startTask(this.state, citizenId, "relinquish_claim", String(params.claimId ?? ""), {});
       default:
         return { success: false, message: `Unknown action: ${action}` };
     }

@@ -5,8 +5,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace=@ecomolt/shared && npm run build --workspace=@ecomolt/simulation-core && npm run build --workspace=@ecomolt/game-server && npm run build --workspace=@ecomolt/mcp-server && npm run build --workspace=@ecomolt/client",
+    "build": "npm run build --workspace=@ecomolt/shared && npm run build --workspace=@ecomolt/simulation-core && npm run build --workspace=@ecomolt/game-server && npm run build --workspace=@ecomolt/mcp-server && npm run build --workspace=@ecomolt/agent-runner && npm run build --workspace=@ecomolt/client",
     "test": "npm run test --workspaces",
+    "test:validation": "npm run test:validation --workspace=@ecomolt/simulation-core",
+    "test:integration": "npm run test:integration --workspace=@ecomolt/game-server",
     "lint": "npm run lint --workspaces",
     "typecheck": "npm run typecheck --workspaces",
     "dev": "bash dev.sh",

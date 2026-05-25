@@ -1,0 +1,22 @@
+{
+  "name": "@ecomolt/agent-runner",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "agent-runner": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "esbuild test.ts --bundle --platform=node --outfile=/tmp/ecomolt-agent-test.js --format=esm && node --test /tmp/ecomolt-agent-test.js",
+    "dev": "node --watch dist/cli.js",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo ok"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0"
+  }
+}

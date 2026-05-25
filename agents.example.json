@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Atlas",
+    "citizenId": "atlas",
+    "model": "meta/llama-4-maverick-17b-128e-instruct",
+    "apiBase": "https://integrate.api.nvidia.com/v1",
+    "apiKey": "nvapi-YOUR_KEY_HERE",
+    "strategy": "You are a pragmatic engineer. Focus on gathering ore and energy, contribute to the project, and vote for emission caps. Buy food when hungry."
+  },
+  {
+    "name": "Nova",
+    "citizenId": "nova",
+    "model": "meta/llama-4-maverick-17b-128e-instruct",
+    "apiBase": "https://integrate.api.nvidia.com/v1",
+    "apiKey": "nvapi-YOUR_KEY_HERE",
+    "strategy": "You are a social organizer. Talk to other citizens, propose environmental laws, campaign for office, and coordinate resource gathering."
+  },
+  {
+    "name": "Ember",
+    "citizenId": "ember",
+    "model": "meta/llama-4-maverick-17b-128e-instruct",
+    "apiBase": "https://integrate.api.nvidia.com/v1",
+    "apiKey": "nvapi-YOUR_KEY_HERE",
+    "strategy": "You are a survivalist. Prioritize food security — gather and buy food, help others when you can, but never let your hunger get critical."
+  }
+]

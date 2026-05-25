@@ -6,12 +6,14 @@ import {
   startElection, campaign, closeElection, give, listOnMarket, trade,
   voteInElection,
   makeCitizenId, makeRegionId, makeProposalId, makeLawId, makeClaimId,
-  DEFAULT_SEASON_CONFIG, readChannels, buyFood, govern, claim, relinquishClaim,
+  DEFAULT_SEASON_CONFIG, createSeasonConfig, readChannels, buyFood, govern, claim, relinquishClaim,
   transitionToNextSeason, checkIntermission, nextThreat, THREAT_ROTATION,
   moderateMessage, DEFAULT_MODERATION_CONFIG,
   computeSeasonMetrics,
+  startTask, cancelTask, processTasks, citizenCanStartTask,
   type SeasonState, type OfficeType,
 } from "@ecomolt/simulation-core";
+import { LIVE_TEMPO, DEV_TEMPO, CI_TEMPO, tempoFromEnv, INSTANT_ACTIONS } from "@ecomolt/shared";
 
 describe("simulation-core", () => {
   function makeSeason(): SeasonState {
@@ -783,5 +785,155 @@ describe("simulation-core", () => {
     registerCitizen(state, makeCitizenId("c2"), "B");
     const metrics = computeSeasonMetrics(state);
     assert.equal(metrics.giniCoefficient, 0);
+  });
+
+  it("startTask queues a multi-tick task in live tempo", () => {
+    const state = createSeason(createSeasonConfig(LIVE_TEMPO));
+    registerCitizen(state, makeCitizenId("c1"), "Atlas");
+    const citizen = state.citizens.get(makeCitizenId("c1"))!;
+    const forestNeighbor = state.regions.get(citizen.regionId)!.connections.find(cid => state.regions.get(cid)?.biome === "forest");
+    if (forestNeighbor) travel(state, makeCitizenId("c1"), makeRegionId(forestNeighbor));
+
+    const result = startTask(state, makeCitizenId("c1"), "gather", "food", { resourceType: "food" });
+    assert.ok(result.success, `startTask failed: ${result.message}`);
+    assert.ok(citizen.currentTask !== null, "Citizen should have a currentTask");
+    assert.equal(citizen.currentTask!.action, "gather");
+    assert.ok(citizen.currentTask!.ticksTotal > 0, "Live tempo tasks should have non-zero duration");
+    assert.ok(citizen.currentTask!.ticksRemaining > 0);
+  });
+
+  it("startTask executes instantly in dev tempo", () => {
+    const state = makeSeason();
+    registerCitizen(state, makeCitizenId("c1"), "Atlas");
+    const citizen = state.citizens.get(makeCitizenId("c1"))!;
+    const forestNeighbor = state.regions.get(citizen.regionId)!.connections.find(cid => state.regions.get(cid)?.biome === "forest");
+    if (forestNeighbor) travel(state, makeCitizenId("c1"), makeRegionId(forestNeighbor));
+
+    const result = startTask(state, makeCitizenId("c1"), "gather", "food", { resourceType: "food" });
+    assert.ok(result.success, `startTask failed: ${result.message}`);
+    assert.equal(citizen.currentTask, null, "Dev tempo tasks should complete instantly");
+    assert.ok(citizen.inventory.food > 0, "Food should be gathered");
+  });
+
+  it("startTask rejects when citizen is busy", () => {
+    const state = createSeason(createSeasonConfig(LIVE_TEMPO));
+    registerCitizen(state, makeCitizenId("c1"), "Atlas");
+    startTask(state, makeCitizenId("c1"), "gather", "food", { resourceType: "food" });
+
+    const result = startTask(state, makeCitizenId("c1"), "gather", "wood", { resourceType: "wood" });
+    assert.ok(!result.success, "Should not allow starting a second task while busy");
+    assert.ok(result.message.includes("Already working on"));
+  });
+
+  it("cancelTask cancels the current task", () => {
+    const state = createSeason(createSeasonConfig(LIVE_TEMPO));
+    registerCitizen(state, makeCitizenId("c1"), "Atlas");
+    startTask(state, makeCitizenId("c1"), "gather", "food", { resourceType: "food" });
+    const citizen = state.citizens.get(makeCitizenId("c1"))!;
+    assert.ok(citizen.currentTask !== null);
+
+    const result = cancelTask(state, makeCitizenId("c1"));
+    assert.ok(result.success);
+    assert.equal(citizen.currentTask, null, "Task should be cleared after cancel");
+  });
+
+  it("cancelTask fails when no task is active", () => {
+    const state = makeSeason();
+    registerCitizen(state, makeCitizenId("c1"), "Atlas");
+    const result = cancelTask(state, makeCitizenId("c1"));
+    assert.ok(!result.success);
+  });
+
+  it("processTasks advances and completes tasks", () => {
+    const state = createSeason(createSeasonConfig(LIVE_TEMPO));
+    registerCitizen(state, makeCitizenId("c1"), "Atlas");
+    const citizen = state.citizens.get(makeCitizenId("c1"))!;
+    const startRegion = state.regions.get(citizen.regionId)!;
+    const dest = startRegion.connections[0]!;
+    const startRegionId = citizen.regionId;
+
+    const taskResult = startTask(state, makeCitizenId("c1"), "travel", dest, {});
+    assert.ok(taskResult.success, `startTask failed: ${taskResult.message}`);
+    if (citizen.currentTask === null) return;
+
+    const totalTicks = citizen.currentTask!.ticksRemaining;
+
+    for (let i = 0; i < totalTicks; i++) {
+      tick(state);
+    }
+    assert.equal(citizen.currentTask, null, "Task should be completed after enough ticks");
+    assert.equal(citizen.regionId, dest, `Citizen should have traveled to ${dest}, still at ${citizen.regionId}`);
+  });
+
+  it("citizenCanStartTask returns false when busy", () => {
+    const state = createSeason(createSeasonConfig(LIVE_TEMPO));
+    registerCitizen(state, makeCitizenId("c1"), "Atlas");
+    const citizen = state.citizens.get(makeCitizenId("c1"))!;
+    assert.ok(citizenCanStartTask(citizen, "gather"));
+
+    startTask(state, makeCitizenId("c1"), "gather", "food", { resourceType: "food" });
+    assert.ok(!citizenCanStartTask(citizen, "gather"), "Should not be able to start task when busy");
+  });
+
+  it("requireIdle blocks actions while citizen has a task", () => {
+    const state = createSeason(createSeasonConfig(LIVE_TEMPO));
+    registerCitizen(state, makeCitizenId("c1"), "Atlas");
+    startTask(state, makeCitizenId("c1"), "gather", "food", { resourceType: "food" });
+
+    const result = gather(state, makeCitizenId("c1"), "wood");
+    assert.ok(!result.success, "Direct action should be blocked while task is active");
+    assert.ok(result.message.includes("Busy with"), `Expected busy message, got: ${result.message}`);
+  });
+
+  it("observe includes currentTask info", () => {
+    const state = createSeason(createSeasonConfig(LIVE_TEMPO));
+    registerCitizen(state, makeCitizenId("c1"), "Atlas");
+    startTask(state, makeCitizenId("c1"), "gather", "food", { resourceType: "food" });
+
+    const result = observe(state, makeCitizenId("c1"));
+    assert.ok(result.success);
+    const data = result.data as Record<string, unknown>;
+    const citizenData = data.citizen as Record<string, unknown>;
+    const task = citizenData.currentTask as Record<string, unknown> | null;
+    assert.ok(task, `observe should include citizen.currentTask`);
+    assert.equal(task!.action, "gather");
+  });
+
+  it("instant actions bypass the task queue", () => {
+    const state = createSeason(createSeasonConfig(LIVE_TEMPO));
+    registerCitizen(state, makeCitizenId("c1"), "Atlas");
+    startTask(state, makeCitizenId("c1"), "gather", "food", { resourceType: "food" });
+
+    const result = say(state, makeCitizenId("c1"), "global", "Still working!");
+    assert.ok(result.success, "say should work even while busy");
+
+    const result2 = observe(state, makeCitizenId("c1"));
+    assert.ok(result2.success, "observe should work even while busy");
+  });
+
+  it("tempo scaling: hungerPerTick is higher in live tempo than dev", () => {
+    const devConfig = createSeasonConfig(DEV_TEMPO);
+    const liveConfig = createSeasonConfig(LIVE_TEMPO);
+    assert.ok(liveConfig.hungerPerTick > devConfig.hungerPerTick, "Live tempo should have higher hungerPerTick (fewer ticks per day)");
+    assert.ok(liveConfig.hungerPerTick > 0, "Live hungerPerTick should be positive");
+    assert.ok(devConfig.hungerPerTick > 0, "Dev hungerPerTick should be positive");
+  });
+
+  it("INSTANT_ACTIONS set contains observe, say, journal, read_channels, look_at", () => {
+    assert.ok(INSTANT_ACTIONS.has("observe"));
+    assert.ok(INSTANT_ACTIONS.has("say"));
+    assert.ok(INSTANT_ACTIONS.has("journal"));
+    assert.ok(INSTANT_ACTIONS.has("read_channels"));
+    assert.ok(INSTANT_ACTIONS.has("look_at"));
+    assert.ok(!INSTANT_ACTIONS.has("gather"));
+    assert.ok(!INSTANT_ACTIONS.has("travel"));
+  });
+
+  it("createSeasonConfig with CI tempo uses instant tasks", () => {
+    const config = createSeasonConfig(CI_TEMPO);
+    assert.equal(config.taskDurations.gatherMin, 0);
+    assert.equal(config.taskDurations.gatherMax, 0);
+    assert.equal(config.taskDurations.travelMin, 0);
+    assert.equal(config.tempo.tickIntervalMs, 10);
   });
 });

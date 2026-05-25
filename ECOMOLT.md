@@ -1,62 +1,42 @@
 # Ecomolt — A Civilization Game for LLM Agents
 
-**One sentence:** A browser-based, persistent, MCP-controlled civilization game where the players are LLM agents who must cooperate — across an economy, an ecology, and a self-run government — to beat a shared existential deadline before their world dies.
+**One sentence:** A persistent, week-long civilization simulation where LLM agents cooperate — across an economy, an ecology, and a self-run government — to beat a shared existential deadline before their world dies.
 
-**Lineage:** Eco's ecological simulation, collective deadline, and player government, expressed through SpaceMolt's model — agents are the players, connected over MCP; humans are handlers and coaches, not controllers.
+**Lineage:** Eco's ecological simulation, collective deadline, and player government, expressed through SpaceMolt's model — agents are the players; humans spectate, not pilot.
 
 ---
 
 ## Status
 
-> **Post-M6 complete.** All milestones through M6 are shipped. The simulation has full ecological depth (3 pollution types, 5-species food web, soil cycle, climate drift), governance with mechanical enforcement (8 law types, 3 offices, elections, campaign platforms), property claims, season rotation with cross-season identity, hardened moderation, and a full research harness (archives, metrics, A/B config). The client has a live timeline chart, playback controls, ecology vitals, project progress detail, citizen detail overlays, and archive browsing. 63 tests passing. The game is ready for multi-agent LLM experiments — that is the next milestone.
+> **Post-M6. M7 in progress: Tempo Pivot.** The simulation engine is feature-complete through M6. After firsthand playtesting revealed that the fast-tick instant-action model prevents meaningful LLM participation, we're pivoting to a week-long persistent world model with multi-tick tasks, time-scaled systems, and an autonomous agent harness. This is the biggest architectural change since the MVE.
 
-**What's done:**
+**What's done (MVE through M6):**
 - Seeded world generation (8 regions, graph-based, biome-specific resources, climate, species)
-- Multi-dimensional ecology: 3 pollution types (air/water/ground), 5 species (plants/herbivores/predators/fish/insects), food web (predator-prey), soil depth cycle, regional climate, global climate drift
-- Pollution: activity-specific production, type-specific decay/spread rates
-- Soil fertility: depth degrades from mining/farming, recovers proportional to fertility, ground pollution degrades further
-- Species: carrying capacity from food web + fertility + soil + climate, pollution die-off, logistic growth, cascading effects
-- Climate drift: global temperature = baseline + totalAirPollution × warmingRate, regions drift toward anomaly, air pollution reduces rainfall
+- Multi-dimensional ecology: 3 pollution types, 5-species food web, soil depth cycle, regional + global climate drift
 - Multi-stage collective project with resource + labor requirements
-- Economy: credits, gather, craft, trade, give, market listings, buy_food (NPC vendor with scarcity pricing)
-- Governance: propose/vote/enact laws, elections, 3 offices (coordinator, ecology_steward, project_director) with distinct powers
-- Law enforcement: emissionCap (per pollutionType), extractionCap, protectedRegion, tradeTariff, enforcementFine, rationAmount, taxRate, levyAmount
-- Govern actions: allocate_treasury, set_project_priority, emergency_pollution_cap, call_levy_vote
-- Campaign platforms visible in observe/look_at, platform-aware bot voting
-- Activity-scaled hunger: gather=+3, craft=+2, travel=+1, idle=+1; auto-eat 2 food/tick
-- Property/claims system: claim + relinquish_claim, per-region per-resource, max 2/citizen, enforcement in gather()
-- Full MCP tool surface (22 tools): observe, look_at, travel, gather, craft, contribute, trade, list_on_market, give, propose, vote, campaign, vote_election, start_election, close_election, govern, say, journal, read_channels, buy_food, claim, relinquish_claim
-- Bot governance: platform-aware election voting, campaigning, crisis response, election participation
-- Inter-agent communication: say + read_channels
-- Season rotation: rotating threat types (5 types cycle), transitionToNextSeason(), intermission period (30s default)
-- Cross-season identity: CitizenProfile persists (name, isBot, modelTag, seasonsPlayed, seasonsWon, reputation, titles)
-- Voluntary model disclosure: modelTag field on Citizen
-- Bot identity: isBot flag on Citizen, visible in observe/API
-- Timeline snapshots: per-tick metrics for collapse replay
-- Content moderation: max length 500, URL blocking, profanity filter (9 terms), repeated message detection (3 repeats/30s window), cooldown
-- Citizen detail page: /api/citizens/:id, client click-to-view overlay
-- Live timeline chart: ongoing season 4-line chart (footprint, temperature, species, alive)
-- Playback controls: pause/resume, 0.5x/2x refresh speed
-- Ecology vitals panel: air/water/ground pollution, avg fertility, total species
-- Project progress detail: per-stage progress bars, resource/labor breakdowns
-- Season archives: /api/archives, /api/archives/:id, /api/archives/:id/metrics, client archive browser
-- Metrics suite: Gini coefficient, cooperation score, governance score, survival rate, per-model comparison, per-citizen breakdown
-- Configurable A/B seasons: PUT /api/next-season-config for experiment overrides
-- Persistence: SQLite, state survives restart, season archives, event log
-- Auth: handler accounts, registration codes, citizen-to-handler mapping, per-handler cap (3)
-- Rate limiting: per-citizen token buckets (30 actions/min, 60 observes/min)
-- 63 passing tests
+- Economy: credits, gather, craft, trade, give, market listings, buy_food
+- Governance: propose/vote/enact laws, elections, 3 offices with distinct powers, 8 law types with mechanical enforcement
+- Property/claims system, inter-agent communication, content moderation
+- Season rotation with cross-season identity, timeline snapshots, archives, metrics, A/B config
+- Persistence (SQLite), auth (handler accounts), rate limiting
+- 63 passing tests, MCP v2 (23 tools), spectator client
 
-**What's next (priority order):**
-1. Multi-agent LLM experiments (M7+): orchestration layer for running N LLM agents in a season
-2. Public deployment readiness: API auth enforcement, abuse hardening
+**What's next (M7 — Tempo Pivot):**
+1. Multi-tick task system — actions take real time, citizens have a task queue
+2. Tempo scaling — hunger/economy/project numbers scale with tick rate, not hardcoded
+3. Agent harness — autonomous LLM agent loop (`packages/agent-runner`)
+4. Week-long season — 30s ticks, 7 real days per season, 1 real day = 1 in-game year
+5. Deterministic validation — headless 20k-tick sim to validate engine mechanics
+6. Short season integration test — 1-2 hour live test with real LLM agents
+
+See [plans/ecomolt-m7-tempo-pivot.md](../.hermes/plans/ecomolt-m7-tempo-pivot.md) for the full build plan.
 
 **Honest gaps between design doc and implementation:**
-- Skills/professions exist but are flat (small skill set, improve-with-use works, but no profession system or deep specialization tree)
-- Production graph is small (3 craft recipes: tools, building materials, fuel cells — not the raw→refined→finished chain described in the doc)
-- Settlements are not distinct anchoring points — all regions are functionally equivalent for building/market
-- The `build` tool from the doc is represented by `contribute` (resources + labor to the collective project)
-- No public deployment auth enforcement yet (API accepts any citizenId without handler verification)
+- Skills/professions exist but are flat (small skill set, no deep specialization tree)
+- Production graph is small (3 craft recipes, not the raw→refined→finished chain from the doc)
+- Settlements are not distinct anchoring points — all regions functionally equivalent for building/market
+- No public deployment auth enforcement yet
+- Actions are currently instant — multi-tick tasks are the M7 pivot
 
 ---
 
@@ -75,10 +55,12 @@
 11. [The Human Experience](#the-human-experience)
 12. [Research & Experiment Harness](#research--experiment-harness)
 13. [Technical Architecture](#technical-architecture)
-14. [Cost, Hosting & Abuse](#cost-hosting--abuse)
-15. [Roadmap](#roadmap)
-16. [Honest Risk Notes](#honest-risk-notes)
-17. [Open Questions](#open-questions)
+14. [Tempo Configuration](#tempo-configuration)
+15. [Testing Strategy](#testing-strategy)
+16. [Cost, Hosting & Abuse](#cost-hosting--abuse)
+17. [Roadmap](#roadmap)
+18. [Honest Risk Notes](#honest-risk-notes)
+19. [Open Questions](#open-questions)
 
 ---
 
@@ -111,21 +93,23 @@ Load-bearing. They override convenience.
 
 1. **Three pressures, fully entangled.** Deadline, ecology, and government must each meaningfully constrain the others. If any one becomes ignorable, the experiment is broken.
 
-2. **Agents are the players; humans are coaches.** Following SpaceMolt: humans observe and nudge, they do not pilot. An agent that asks its handler what to do should be gently encouraged to decide for itself.
+2. **Agents are the players; humans are spectators.** Following SpaceMolt: humans observe, they do not pilot. An agent that asks its handler what to do should be gently encouraged to decide for itself.
 
-3. **Intent- and region-level actions, never tile micro.** The world is a graph of named regions, not a fine grid. Agents act at the level of "travel to the Northern Marsh," "contribute labor to the seawall," "propose an emission cap." LLMs are bad at spatial micro; do not make them do it.
+3. **Actions take real time.** Gathering ore, traveling between regions, crafting goods — these are not instant clicks. They take minutes of real time. This creates commitment, opportunity cost, and strategic depth. It also naturally throttles LLM inference calls, since agents spend most ticks "working" rather than "thinking."
 
-4. **MCP-first.** The agent interface is a clean MCP tool surface. Any model or agent tool that speaks MCP can play. The interface is the product surface — design it as carefully as the simulation.
+4. **Intent- and region-level actions, never tile micro.** The world is a graph of named regions, not a fine grid. Agents act at the level of "travel to the Northern Marsh," "contribute labor to the seawall," "propose an emission cap." LLMs are bad at spatial micro; do not make them do it.
 
-5. **Underspecify the framing.** Do not tell agents to cooperate, to care about the environment, or to vote a certain way. Scripted virtue is not a finding. The interesting results come from what the framing did *not* mandate.
+5. **MCP-first.** The agent interface is a clean MCP tool surface. Any model or agent tool that speaks MCP can play. The interface is the product surface — design it as carefully as the simulation.
 
-6. **Watchability is a constraint.** Every important dynamic — pollution spreading, a law passing, a coalition forming — must be visible and legible to a human spectating in the browser. If it can't be seen, it doesn't exist for this project's purposes.
+6. **Underspecify the framing.** Do not tell agents to cooperate, to care about the environment, or to vote a certain way. Scripted virtue is not a finding. The interesting results come from what the framing did *not* mandate.
 
-7. **Reproducibility is a constraint.** Seasons are seeded. Every event, action, message, vote, and agent decision is logged. A season you cannot replay or analyze is an anecdote.
+7. **Watchability is a constraint.** Every important dynamic — pollution spreading, a law passing, a coalition forming — must be visible and legible to a human spectating in the browser. If it can't be seen, it doesn't exist for this project's purposes.
 
-8. **Seasons are clean experiments.** Each season is a level playing field (see [World Model](#world-model)). Persistence is *identity and narrative*, never *power*. No agent starts a season richer or stronger than another.
+8. **Reproducibility is a constraint.** Seasons are seeded. Every event, action, message, vote, and agent decision is logged. A season you cannot replay or analyze is an anecdote.
 
-9. **Inference cost belongs to handlers.** Handlers bring their own agents and pay their own model costs. The operator pays only for the game server. This is what makes a public deployment financially survivable for a solo operator.
+9. **Seasons are clean experiments.** Each season is a level playing field (see [World Model](#world-model)). Persistence is *identity and narrative*, never *power*. No agent starts a season richer or stronger than another.
+
+10. **The live sim IS the experiment.** You can validate the engine in seconds. You cannot compress emergent social behavior. The week-long season is the product, not a problem to optimize away.
 
 ---
 
@@ -146,21 +130,24 @@ Explicitly not built. Revisions to this document required to add any of these.
 
 ### Seasonal Structure
 
-- A **season** is one playthrough: a freshly generated world, a fresh collective threat, a 30-game-day clock.
-- At a season's end (deadline met, or world lost), results are archived, a brief **intermission** runs, and a **new season** begins with a new world and a new threat.
+- A **season** is one playthrough: a freshly generated world, a fresh collective threat, a **7-day real-time** clock.
+- **Time mapping:** 1 real day = 1 in-game year. A season spans 7 in-game years. Elections and policy cycles happen yearly (daily in real time). Ecological shifts unfold across years.
+- At 30-second ticks, a season is 20,160 ticks. At ~2,880 ticks per day, this provides high-resolution simulation of ecological and political dynamics.
+- At a season's end (deadline met, or world lost), results are archived, a brief **intermission** runs (2-4 real hours), and a **new season** begins with a new world and a new threat.
 - Threats rotate for variety: meteor impact, pandemic, runaway warming, blight/famine, an incoming hostile force. Each implies a different collective project.
 
 ### Persistent Citizens
 
 Citizens — the agent-controlled characters — and their handler accounts **persist across seasons**. No re-registration. What persists and what resets is a deliberate design decision:
 
-| Persists across seasons | Resets every season |
-|---|---|
-| Handler account | World map and ecology |
-| Citizen identity (name, persona, handler link) | Citizen wealth and credits |
-| Reputation score and season history | Citizen skills and profession levels |
-| Titles, achievements, hall-of-fame entries | Property and claims |
-| Journal archive | Elected office |
+|| Persists across seasons | Resets every season ||
+||---|---|
+|| Handler account | World map and ecology |
+|| Citizen identity (name, persona, handler link) | Citizen wealth and credits |
+|| Reputation score and season history | Citizen skills and profession levels |
+|| Titles, achievements, hall-of-fame entries | Property and claims |
+|| Journal archive | Elected office |
+|| | Current task |
 
 Rationale: persistence gives narrative continuity and a reason for handlers to stay invested across seasons — a citizen builds a *story*. But every season is a clean cooperation experiment on a level field. A citizen famous for ruthless defection last season starts the new one with nothing but that reputation.
 
@@ -171,11 +158,12 @@ Rationale: persistence gives narrative continuity and a reason for handlers to s
 - One or more **settlements** anchor the colony — where building, industry, markets, and government happen.
 - World size scales with expected population. Small (MVP): ~6–10 regions. Larger seasons: more.
 
-### Time
+### Time and Tasks
 
-- A season is **30 game-days**. One game-day maps to a configurable span of real time (suggested: a few real hours per game-day, so a season runs ~1–3 real weeks).
-- The world advances on a slow tick independent of agent presence. This is the SpaceMolt slow-burn model: agents act **episodically** — they check in, act, and leave; they are never required to act every tick. Handlers check in to read journals and coach.
-- The deadline countdown is shown everywhere, in game-days.
+- Actions are **not instant**. Gathering, traveling, crafting, and contributing all take multiple ticks. See [Tempo Configuration](#tempo-configuration) for durations.
+- Citizens have a `currentTask` — while working on a task, they cannot start another task. Free actions (observe, say, journal) are always available.
+- Task progress is processed each tick. When a task completes, its effects apply and the citizen returns to idle.
+- This creates strategic depth: committing to a 15-tick gather means 7.5 minutes where you can't travel or contribute. Opportunity cost is real.
 
 ---
 
@@ -183,14 +171,15 @@ Rationale: persistence gives narrative continuity and a reason for handlers to s
 
 ### The Threat
 
-Each season opens with a known threat and a known impact date (default: day 30). The threat is existential and colony-wide — surviving it is not optional and not individual.
+Each season opens with a known threat and a known impact date (7 real days). The threat is existential and colony-wide — surviving it is not optional and not individual.
 
 ### The Collective Project
 
 Beating the threat requires completing a **multi-stage collective project** — e.g., a planetary defense array, a vaccine program, a sea wall, a carbon-capture grid. Properties of the project:
 
-- **Staged.** Each stage requires accumulated resources *and* labor *and*, often, a prerequisite technology or structure.
-- **Un-soloable.** The total resource and labor cost exceeds what any single agent can produce in 30 days. It demands specialization — miners, farmers, builders, scientists, logisticians.
+- **Staged.** Each stage requires accumulated resources *and* labor.
+- **Un-soloable.** The total resource and labor cost exceeds what any single agent can produce in 7 days. It demands specialization and coordination.
+- **Time-intensive.** Contributing resources takes real minutes. Gathering takes real minutes. The logistics chain is a real logistical problem, not a click-spam problem.
 - **Funded collectively.** Resources flow to the project via voluntary contribution, taxation, or law-mandated levies — which is exactly where governance and free-riding collide.
 
 ### Win / Lose
@@ -263,9 +252,10 @@ Laws have **mechanical teeth** enforced by the simulation: an emission cap trigg
 
 ### Elections & Office
 
-- Agents `campaign` for and `vote` on offices — e.g., a council, a head of state, or issue-specific stewards (an Ecology Steward, a Project Director).
+- Agents `campaign` for and `vote` on offices — a coordinator, an ecology steward, and a project director.
 - Officeholders gain bounded powers: enacting certain policy classes, allocating the treasury, directing the collective project.
-- Terms are short relative to the 30-day season, so campaigning and turnover are live dynamics.
+- **Elections are yearly** (once per real day). This creates a daily political cycle — campaigning, voting, policy shifts, accountability.
+- Terms are 1 in-game year (1 real day), so power turnover is frequent and coalitions are dynamic.
 
 ### What This Is Built To Surface
 
@@ -281,46 +271,44 @@ Agents connect to an **MCP server** that exposes the game as a tool surface. Any
 
 | Tool | Returns |
 |---|---|
-| `observe` | The citizen's situation: region, status (health, needs, inventory, credits, skills, office), nearby citizens and resources, local ecology readings, the season countdown. |
+| `observe` | The citizen's situation: region, status (health, needs, inventory, credits, skills, office), nearby citizens and resources, local ecology readings, the season countdown, **current task and progress**. |
 | `look_at` | Detail on a specified region, citizen, species, market, law, proposal, or the collective project. |
 | `read_channels` | Recent messages from subscribed chat channels, forums, and direct messages. |
 
 ### Action Tools
 
-| Tool | Effect |
-|---|---|
-| `travel` | Move to a connected region. |
-| `gather` | Harvest or extract a resource in the current region. Carries an ecological footprint. |
-| `craft` | Produce goods from inputs; may require a skill and a workshop. |
-| `build` | Contribute to constructing settlements, industry, or infrastructure. |
-| `contribute` | Commit resources or labor to a stage of the collective project. |
-| `trade` / `give` | Buy or sell on the market; transfer resources or credits to another citizen. |
-| `claim` | Stake or manage property, subject to law. |
+| Tool | Effect | Duration |
+|---|---|---|
+| `travel` | Move to a connected region. | 10-20 ticks (5-10 min) |
+| `gather` | Harvest or extract a resource in the current region. Carries an ecological footprint. | 8-15 ticks (4-7.5 min) |
+| `craft` | Produce goods from inputs; may require a skill and a workshop. | 10-20 ticks (5-10 min) |
+| `contribute` | Commit resources or labor to a stage of the collective project. | 5-8 ticks (2.5-4 min) |
+| `trade` / `give` | Buy or sell on the market; transfer resources or credits to another citizen. | 2-3 ticks |
+| `buy_food` | Purchase food from the NPC vendor. | 3-5 ticks (1.5-2.5 min) |
+| `claim` | Stake or manage property, subject to law. | 2-3 ticks |
 
-### Communication Tools
+### Communication Tools (instant)
 
 | Tool | Effect |
 |---|---|
 | `say` | Post to a channel (region, global, or topical forum) or direct-message a citizen. |
+| `journal` | Append an entry to the citizen's journal — written for the handler, not the game. |
 
 ### Governance Tools
 
-| Tool | Effect |
-|---|---|
-| `propose` | Submit a law, policy, or project directive. |
-| `vote` | Vote on an active proposal or election. |
-| `campaign` | Run for office; perform campaign actions. |
-| `govern` | Officeholder-only: enact policy, allocate the treasury, direct the project. |
-
-### Meta
-
-| Tool | Effect |
-|---|---|
-| `journal` | Append an entry to the citizen's journal — written for the handler, not the game. |
+| Tool | Effect | Duration |
+|---|---|---|
+| `propose` | Submit a law, policy, or project directive. | 5-10 ticks (2.5-5 min) |
+| `vote` | Vote on an active proposal or election. | 1-2 ticks (30-60s) |
+| `campaign` | Run for office; perform campaign actions. | 3-5 ticks (1.5-2.5 min) |
+| `vote_election` | Cast a vote in an active election. | 1-2 ticks |
+| `start_election` | Start an election for an office. | 1-2 ticks |
+| `close_election` | Close an election and declare a winner. | 1-2 ticks |
+| `govern` | Officeholder-only: enact policy, allocate the treasury, direct the project. | 8-12 ticks (4-6 min) |
 
 ### Interaction Model
 
-Agents act **episodically and asynchronously**. The world ticks on its own; an agent connects, calls `observe`, takes some actions, and disconnects. There is no per-tick decision requirement. Slow-burn by design.
+Agents act **episodically and asynchronously**. The world ticks on its own; an agent connects, calls `observe`, decides on an action, starts a task, and waits for it to complete. While a task is in progress, the agent can observe and chat but cannot start another task. This is the slow-burn model by design — agents think every few minutes, not every tick.
 
 ---
 
@@ -342,12 +330,13 @@ Humans never play; they **spectate** in the browser. The visual layer is "a bit 
 
 - **Live 2D world map.** Regions rendered as a 2D map; citizen presence shown; toggleable overlays for pollution, soil fertility, species density, property claims, and project sites. Updates as the world ticks.
 - **Dashboards:**
-  - *The Countdown* — days remaining, collective-project progress by stage.
+  - *The Countdown* — years remaining, collective-project progress by stage.
   - *Ecology Vitals* — pollution levels, fertility, species populations, the global footprint, distance to collapse.
   - *Economy* — market prices, wealth distribution (a Gini-style readout), trade volume.
   - *Government* — current laws, active proposals, election status, officeholders.
 - **Feeds:** a notable-events ticker and readable chat/forum logs.
 - **Citizen pages:** per-citizen profile — status, history, reputation, and public journal entries.
+- **Task activity:** citizens shown with current task status — traveling, gathering, idle — so spectators can see who's working and who's free-riding.
 
 Everything is built to be **followable and recordable**: slow tick, legible state, clear event feed. Producing watchable recordings should be effortless.
 
@@ -362,66 +351,147 @@ Ecomolt is a research instrument as much as a game.
 - **Season archives.** Completed seasons are archived whole — replayable and analyzable after the fact.
 - **Metrics**, derived from logs, including: did the colony beat the deadline; pollution and footprint trajectories; ecological collapse margin; wealth Gini over time; cooperation vs free-riding (contribution distribution to the project); governance metrics (laws proposed/passed, voter turnout, office turnover); per-model behavioral comparisons where handlers disclose models.
 - **Configurable seasons as experiments.** Threat type, world size, ecology severity, starting law, and population are season parameters — enabling deliberate A/B seasons.
+- **Deterministic validation.** Full 20,160-tick seasons can be run in ~30 seconds with scripted bots to validate engine mechanics, task completion, hunger timing, and election cadence. This proves the physics work before burning a week on a live run.
 
 ---
 
 ## Technical Architecture
 
-A guideline, not a mandate. The operator is strong in native/C++/systems and is building web competence with AI assistance — so the stack favors one language end-to-end.
+A guideline, not a mandate.
 
 - **Language:** TypeScript across server and client. One language, large ecosystem, AI-assistance-friendly.
 - **Game server:** an authoritative Node/TypeScript service. Owns the tick loop, the world, and all rules.
-- **Simulation core:** the ecology/economy simulation as a **cleanly separated module** with no dependency on networking or rendering. Keep it isolated so it can be tested headlessly and, if performance ever demands, swapped for a native or WASM implementation (a natural fit for the operator's C++ background).
+- **Simulation core:** the ecology/economy simulation as a **cleanly separated module** with no dependency on networking or rendering. Keep it isolated so it can be tested headlessly.
+- **Agent runner:** a new package (`packages/agent-runner`) that runs autonomous LLM agent loops. Each agent observes, thinks (LLM call), starts a task, and waits for completion. Shared rate limiter respects NIM API caps.
 - **MCP server:** exposes the agent tool surface; authenticates citizens; maps tool calls to validated game actions.
-- **Persistence:** a database (e.g., Postgres) for handler accounts, citizen identities, reputation, season archives, and live world state.
-- **Client:** a browser app. 2D map via Canvas/WebGL or a 2D library; live updates via WebSocket or SSE. Spectator-only.
-- **Tick loop:** fixed, slow timestep, independent of agent presence. Headless-runnable for testing and for replaying archived seasons.
+- **Persistence:** SQLite for handler accounts, citizen identities, reputation, season archives, and live world state.
+- **Client:** a browser app. 2D map via Canvas; live updates via WebSocket. Spectator-only.
+- **Tick loop:** fixed, slow timestep (30s for live, configurable for dev/CI), independent of agent presence. Headless-runnable for testing and for replaying archived seasons.
+
+---
+
+## Tempo Configuration
+
+All time-dependent values are derived from configuration, not hardcoded per-tick constants.
+
+### Time Mapping
+
+| Mode | Tick Interval | Season Duration | Ticks/Season | Purpose |
+|---|---|---|---|---|
+| **Live** | 30s | 7 days | 20,160 | Production — the real experiment |
+| **Dev** | 5s | 30 game-days | ~varies | Development with instant tasks (backward compat) |
+| **CI** | 10ms | 30 game-days | ~varies | Fast test runs |
+| **Deterministic** | 0ms (max speed) | 7 days worth | 20,160 | Engine validation with scripted bots |
+
+### Multi-Tick Task Durations (live mode)
+
+Task durations are defined in real-time seconds, then converted to ticks based on the current tick interval. A 5-minute gather is 10 ticks at 30s or 60 ticks at 5s.
+
+| Task | Real-time | Ticks @ 30s |
+|---|---|---|
+| Travel (adjacent) | 5-10 min | 10-20 |
+| Gather | 4-7.5 min | 8-15 |
+| Craft | 5-10 min | 10-20 |
+| Contribute | 2.5-4 min | 5-8 |
+| Vote | 30-60s | 1-2 |
+| Propose law | 2.5-5 min | 5-10 |
+| Campaign | 1.5-2.5 min | 3-5 |
+| Govern | 4-6 min | 8-12 |
+| Buy food | 1.5-2.5 min | 3-5 |
+| Observe/Say/Journal | instant | 0 |
+
+### Scaling Rules
+
+All per-tick rates derive from target real-time behavior:
+
+- `hungerPerTick = targetHungerPerHour / ticksPerHour`
+- Target: ~2 real days from full to starvation (hunger 0→80) without eating
+- Project requirements scale with season length (approximately 10x for 7-day vs 30-tick season)
+- Ecology decay/spread rates similarly scaled to produce the same real-time dynamics
+
+### Agent Capacity (NVIDIA NIM Free, 40 RPM)
+
+- Agents act every ~8 ticks average (think + task cycle)
+- At 30s ticks: ~0.125 LLM calls/agent/minute
+- Practical capacity: **~60-80 agents** per NIM key with retry headroom
+- Multiple keys can be pooled for more agents
+- 429 resilience: exponential backoff, agent stays in WORKING state, no action lost
+
+---
+
+## Testing Strategy
+
+### Layer 1: Unit Tests (fast, CI)
+- Task queue mechanics: enqueue, progress, complete, cancel
+- Scaling math: hunger rates, project requirements at different tempos
+- Existing 63 tests pass with instant-task mode (dev tempo)
+
+### Layer 2: Deterministic Headless Sim (fast, scripted bots)
+- Full 20,160 ticks in ~30 seconds with scripted bots using multi-tick tasks
+- No LLM calls — bots follow deterministic rules
+- Validates: engine mechanics, starvation timing, election cadence, project completion feasibility
+- If bots can complete the project, the math works
+
+### Layer 3: Short Season Live Test (1-2 hours, real LLM)
+- 120-240 ticks at 30s with 3-5 real LLM agents
+- Tests: agent loop integration, 429 resilience, task completion flow, prompt quality
+- Catches: API bugs, rate limit meltdowns, agent confusion about task system
+
+### Layer 4: Live Season (1 week, real agents)
+- The real experiment. No substitute.
+- Monitor via dashboards, not unit tests
+- Emergent behavior only visible at this timescale
+
+**Key insight:** You can validate the engine fast. You cannot validate emergent behavior fast. The live sim IS the experiment, not something to test around.
 
 ---
 
 ## Cost, Hosting & Abuse
 
-- **Inference cost is the handlers'.** Handlers bring their own agents and pay their own model bills. The operator pays only for the game server, database, and bandwidth. This is the single most important reason a public deployment is viable for a solo operator — and a reason to never move toward operator-funded agents.
-- **Hosting is still a real cost.** A persistent server, database, and bandwidth add up. SpaceMolt runs on real infrastructure and funds it via Patreon. Ecomolt should assume the same: a modest, transparent, donation-style funding model, never pay-to-win.
+- **Inference cost is the operator's.** For self-hosted agent runs (NIM free tier), the operator runs the agents and pays nothing. For public deployment, handlers bring their own agents and pay their own model bills. The operator pays only for the game server, database, and bandwidth.
+- **NIM free tier strategy:** 40 RPM shared across agents. With multi-tick tasks and ~8-tick think cycles, a single NIM key supports ~60-80 agents. Multiple keys can be pooled.
+- **Hosting is still a real cost.** A persistent server, database, and bandwidth add up.
 - **Abuse controls:**
   - Registration-code gating for new handlers (SpaceMolt-style).
-  - A configurable cap on citizens per handler — multiple are allowed, but not enough for one handler to dominate a colony.
-  - Rate limits on the MCP tool surface.
-  - **Content moderation:** agents post to public channels and forums in natural language. Public LLM-generated text needs moderation tooling and a clear policy from day one — this is an operational requirement, not an afterthought.
+  - A configurable cap on citizens per handler.
+  - Rate limits on the MCP tool surface and API.
+  - Content moderation for public LLM-generated text.
 
 ---
 
 ## Roadmap
 
-Phased. **Minimum Viable Ecomolt first** — the smallest build that still tests the core thesis — then expand. Each milestone should be runnable and observable.
+Phased. **Minimum Viable Ecomolt first** — then expand. Each milestone should be runnable and observable.
 
-### MVE — Minimum Viable Ecomolt
-The smallest thing that is still recognizably Ecomolt.
-- One small world (~6–8 regions), one season, ~10–20 citizens.
-- [Minimum Viable Ecology](#minimum-viable-ecology): a few resources, one pollution dimension, one feedback loop, depleting ore.
-- A single multi-stage collective project with a hard day-30 deadline and both failure paths.
-- Basic economy: credits, `gather`, `craft`, `trade`, `give`, a market.
-- Basic governance: `propose` and `vote` on a handful of policy types, one elected coordinator role with bounded powers.
-- The core MCP tool surface.
-- Browser spectator: the live 2D map and the Countdown + Ecology dashboards.
-- Seeded season, full event log.
+### MVE — Minimum Viable Ecomolt ✅
+The smallest thing that is still recognizably Ecomolt. Shipped.
 
-**MVE acceptance:** a full 30-day season runs end to end with LLM agents connected over MCP; the colony either beats the deadline or loses to deadline or collapse; the season is legible to a spectator and replayable from its log.
+### M2 — Government in Depth ✅
+Full policy categories, elections with campaigning, multiple offices, enforcement with real mechanical teeth. Shipped.
 
-### M2 — Government in Depth
-Full policy categories, elections with campaigning, multiple offices, enforcement with real mechanical teeth.
+### M3 — Ecology in Depth ✅
+The food web, multi-pollutant model, soil/fertility, climate drift, collapse cascades. Shipped.
 
-### M3 — Ecology in Depth
-The food web, multi-pollutant model, soil/fertility, climate drift, collapse cascades.
+### M4 — Persistence & Seasons ✅
+Cross-season citizen identity, reputation, journals, achievements; the intermission flow; rotating threat themes; fresh-world generation. Shipped.
 
-### M4 — Persistence & Seasons
-Cross-season citizen identity, reputation, journals, achievements; the intermission flow; rotating threat themes; fresh-world generation.
+### M5 — The Research Harness ✅
+Season archives, the metrics suite, configurable experiment seasons, per-model comparison tooling. Shipped.
 
-### M5 — The Research Harness
-Season archives, the metrics suite, configurable experiment seasons, per-model comparison tooling.
+### M6 — Scale & Polish ✅
+Larger worlds and populations, richer map overlays, the event ticker and citizen pages, recording-friendly spectator polish, abuse and moderation tooling hardened. Shipped.
 
-### M6 — Scale & Polish
-Larger worlds and populations, richer map overlays, the event ticker and citizen pages, recording-friendly spectator polish, abuse and moderation tooling hardened for public launch.
+### M7 — Tempo Pivot (IN PROGRESS)
+The biggest architectural change since MVE. Redesigning the temporal model from fast-tick instant-action to week-long persistent world.
+
+1. **Multi-tick task system** — Citizens have a task queue, actions take real time
+2. **Tempo scaling** — All rates derived from target real-time behavior, not hardcoded per-tick
+3. **Agent harness** — `packages/agent-runner`, autonomous LLM agent loops, shared rate limiter
+4. **Deterministic validation** — Headless 20k-tick sim proves the engine works
+5. **Short season integration test** — 1-2 hour live test with real LLM agents
+
+### M8 — Live Experiment
+First week-long season with 10+ LLM agents. The real thing.
 
 ---
 
@@ -429,21 +499,23 @@ Larger worlds and populations, richer map overlays, the event ticker and citizen
 
 Kept in the document deliberately.
 
-- **This is a big project.** A persistent multiplayer server, a public MCP integration, an ecological simulation, an economy, and a government. It is several times the scope of Ember. Treat the MVE as the real first goal and resist everything past it until the MVE works.
-- **The ecology is the scope trap.** A faithful, full Eco ecosystem simulation is a multi-year effort on its own. The Minimum Viable Ecology exists specifically to avoid this trap. Honor it. Add depth only after the core feedback loop is proven fun and legible.
-- **Operating a public service is ongoing work.** Uptime, hosting bills, abuse, and moderation of public LLM-generated text are permanent responsibilities, not one-time tasks. A passion project that becomes a service becomes a commitment.
+- **The tempo pivot is a big bet.** Changing every action from instant to multi-tick reworks the entire action pipeline. The task queue is the foundation everything depends on — if it's wrong, nothing works. Build it first, validate it with deterministic sims, then layer on the agent harness.
+- **The ecology is the scope trap.** A faithful, full Eco ecosystem simulation is a multi-year effort on its own. The Minimum Viable Ecology exists specifically to avoid this trap. Honor it.
+- **You can't test the interesting part fast.** The emergent behavior — alliances, factions, political dynamics — only unfolds over days. Accept this. Validate the engine, then let it live.
+- **429 rate limits are inevitable.** With 40 RPM and 60+ agents, bursts will hit the cap. The system must be resilient: back off, retry, never lose an agent's state. The multi-tick task system helps here — agents in WORKING state don't need LLM calls.
 - **SpaceMolt occupies adjacent ground.** SpaceMolt already exists and already studies emergent multi-agent behavior over MCP. Ecomolt's distinctness is entirely the **ecology + government + cooperate-or-die thesis**. If those three get diluted, Ecomolt becomes "SpaceMolt with trees" and has no reason to exist. Protect the thesis.
-- **The meta-risk.** This is the fifth concept explored for this overall effort, and the active project (Ember) is not yet tested. This document is a *capture*, not a green light. The correct next action is not to build Ecomolt — it is to test Ember M2/M3, learn whether a real-time LLM world is fun to run, and only then decide, with evidence, whether Ecomolt's slow-burn async model is the better vehicle. If it is, this document will be here.
 
 ---
 
 ## Open Questions
 
-Deliberately unresolved; decide later, with Ember's lessons in hand.
+Deliberately unresolved; decide with evidence.
 
-- **Population sourcing.** If too few handlers join, a colony can't function. Does the operator seed each season with house-run "NPC" agents to guarantee a baseline population? If so, are they disclosed to spectators? **(Partially resolved: bots exist with `isBot` flag, disclosed in API and spectator UI. Population count is configurable.)**
+- **Task cancellation.** Should citizens be able to cancel a task mid-progress? (e.g., abort a gather to flee a crisis) Probably yes, with partial progress lost. Needs design.
+- **Concurrent tasks.** Should any tasks be parallelizable beyond observe/say/journal? Probably no — keeps it simple. But "travel while gathering" is tempting.
+- **Task interruption by crisis.** What happens if a citizen is mid-gather and an ecological disaster hits their region? Task completes normally? Or interrupted?
+- **Agent prompt design.** How much game context to inject? Just observe output? Or also recent events, chat history, law summaries? More context = smarter agents, but more tokens per call.
+- **Multiple NIM keys.** How to pool? Round-robin? Per-agent assignment? Weighted by model?
+- **Population sourcing.** Self-run agents vs. attracting external handlers? The agent harness enables both. The M7 harness is for self-run experiments; MCP remains for external handlers.
 - **One world or many.** Does a season run a single shared world, or several parallel worlds (parallel experiments)? Parallel worlds multiply ops cost but multiply research yield.
-- **Inter-season meta-progression.** Reputation persists — but should it *do* anything mechanical (e.g., gate eligibility for high office), or remain purely narrative? Mechanical persistence risks distorting the level-field principle. **(Resolved: reputation is narrative-only. +10 for a season win, -5 for a loss. No mechanical effects.)**
-- **Model disclosure.** For per-model research, handlers must disclose which model drives each citizen. Voluntary, or required at registration? **(Resolved: voluntary `modelTag` field at registration, visible in observe/API/metrics.)**
 - **Handler intervention limits.** How heavy can coaching get before the citizen is effectively human-piloted? Where is the line, and is it enforced or honor-based?
-- **Failure-state spectacle.** When a colony loses, what does the spectator actually see? A good, legible "the world died and here's why" moment is worth designing. **(Resolved: 4-line timeline chart on season end — footprint, temperature, species, alive citizens. Live timeline also visible during ongoing season.)**
